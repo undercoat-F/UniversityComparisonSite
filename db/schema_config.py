@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from string import Template
 
 try:
     from dotenv import load_dotenv
@@ -71,9 +70,8 @@ def get_all_table_refs() -> dict[str, str]:
 
 
 def render_sql_template(sql_text: str) -> str:
-    env_names = {match.group(1) for match in TEMPLATE_REF_RE.finditer(sql_text)}
-    refs = {name: get_table_ref(name) for name in env_names}
-    return Template(sql_text).safe_substitute(refs)
+    refs = {match.group(1): get_table_ref(match.group(1)) for match in TEMPLATE_REF_RE.finditer(sql_text)}
+    return TEMPLATE_REF_RE.sub(lambda match: refs[match.group(1)], sql_text)
 
 
 def set_search_path(cursor, *schemas: str) -> None:
