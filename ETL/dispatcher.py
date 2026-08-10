@@ -160,6 +160,7 @@ async def run_dispatcher(
     httpx_timeout_sec = _env_int("ETL_HTTPX_TIMEOUT_SEC", timeout_sec)
     worker_timeout_sec = _env_int("ETL_WORKER_TIMEOUT_SEC", 120)
     dispatcher_timeout_sec = _env_int("ETL_DISPATCHER_TIMEOUT_SEC", 0, 0)
+    domain_timeout_sec = _env_int("ETL_DOMAIN_MAX_SECONDS", 0, 0)
     stall_guard_sec = _env_int("ETL_STALL_GUARD_SEC", 900, 0)
     stall_site_sample = _env_int("ETL_STALL_SITE_SAMPLE", 5)
 
@@ -216,6 +217,7 @@ async def run_dispatcher(
                 site.run_id = run_id
 
     started_at = time.monotonic()
+    domain_started_at: dict[str, float | None] = {site.domain: None for site in sites}
     last_progress_at = started_at
     stalled_since: float | None = None
     last_completed_total = -1
@@ -228,6 +230,7 @@ async def run_dispatcher(
         f"httpx_timeout={httpx_timeout_sec}s "
         f"worker_timeout={worker_timeout_sec}s "
         f"dispatcher_timeout={(str(dispatcher_timeout_sec) + 's') if dispatcher_timeout_sec > 0 else 'disabled'} "
+        f"domain_timeout={(str(domain_timeout_sec) + 's') if domain_timeout_sec > 0 else 'disabled'} "
         f"stall_guard={(str(stall_guard_sec) + 's') if stall_guard_sec > 0 else 'disabled'} "
         f"pending_limit={pending_queue_limit}",
         flush=True,
@@ -251,6 +254,40 @@ async def run_dispatcher(
 
             while True:
                 now = time.monotonic()
+
+                if domain_timeout_sec > 0:
+                    for site in sites:
+                        if site.status != "active":
+                            continue
+                        if domain_started_at.get(site.domain) is None and (
+                            site.visited_count_total > 0 or site.in_progress_urls
+                        ):
+                            domain_started_at[site.domain] = now
+
+                if domain_timeout_sec > 0:
+                    for site in sites:
+                        if site.status != "active":
+                            continue
+                        started = domain_started_at.get(site.domain)
+                        if started is None:
+                            continue
+                        elapsed = now - started
+                        if elapsed < domain_timeout_sec:
+                            continue
+                        dropped_pending = len(site.queue)
+                        while site.queue:
+                            site.pop_next_task()
+                        site.status = "stopped"
+                        site.add_error(
+                            f"domain_timeout domain={site.domain} elapsed={int(elapsed)}s limit={domain_timeout_sec}s dropped_pending={dropped_pending}"
+                        )
+                        print(
+                            "[DISPATCHER][WARN] "
+                            f"domain_timeout domain={site.domain} elapsed={int(elapsed)}s "
+                            f"limit={domain_timeout_sec}s dropped_pending={dropped_pending}",
+                            flush=True,
+                        )
+
                 snap = _progress_snapshot(sites, root_target_total)
 
                 completed_total = int(snap["completed_total"])

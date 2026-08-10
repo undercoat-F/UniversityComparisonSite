@@ -4,10 +4,32 @@ CREATE TABLE IF NOT EXISTS ${CRAWL_RUNS_TABLE} (
   id BIGSERIAL PRIMARY KEY,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ,
-  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running', 'completed', 'failed', 'stopped')),
+  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running', 'completed', 'failed', 'stopped', 'timed_out', 'stalled')),
   root_seed_count INTEGER NOT NULL DEFAULT 0,
   notes TEXT
 );
+
+DO $$
+DECLARE
+  c RECORD;
+BEGIN
+  FOR c IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = '${CRAWL_RUNS_TABLE}'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%status%'
+  LOOP
+    EXECUTE format('ALTER TABLE ${CRAWL_RUNS_TABLE} DROP CONSTRAINT %I', c.conname);
+  END LOOP;
+
+  EXECUTE 'ALTER TABLE ${CRAWL_RUNS_TABLE} ADD CONSTRAINT crawl_runs_status_check '
+          || 'CHECK(status IN (''running'', ''completed'', ''failed'', ''stopped'', ''timed_out'', ''stalled''))';
+EXCEPTION
+  WHEN duplicate_object THEN
+    NULL;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS ${CRAWL_QUEUE_STATE_TABLE} (
   id BIGSERIAL PRIMARY KEY,
