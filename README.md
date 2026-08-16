@@ -28,50 +28,63 @@
 
 ```mermaid
 flowchart LR
-    subgraph Sources[外部データソース]
-        Sites[大学・教育機関サイト]
+
+    subgraph Internet["External"]
+        Web["University Websites"]
     end
 
-    subgraph Collection[収集・探索]
-        Observer["Observer<br/>情報源の観測・候補発見"]
-        Queue["InMemoryObserveQueue<br/>プロセス内 FIFO キュー"]
-        Promotion["Quality Gate / Seed Promotion<br/>品質を満たす候補をseed_urlsへ登録"]
-        Seed[(seed_urls<br/>PostgreSQL)]
-        Scheduler["ETL Scheduler<br/>seed_urlsからenabled URLを取得"]
-        Searcher["Crawler<br/>URL取得・HTML解析"]
+    subgraph ObserverProcess["Observer Process"]
+        Observer["Observer"]
+        ObserveQueue[["In-memory Queue"]]
+        QualityGate["Quality Gate"]
+
+        Observer --> ObserveQueue
+        ObserveQueue --> QualityGate
     end
 
-    subgraph Processing[変換・品質管理]
-        JSONL["抽出結果 JSONL<br/>実行ログディレクトリ"]
-        Transform["ETL<br/>JSON -> rows 変換"]
-        Gate["Observer Quality Gate<br/>エラー率・取得率・API使用量を判定"]
+    subgraph ETLProcess["ETL Process"]
+        Scheduler["Scheduler"]
+        Crawler["Crawler"]
+        RecordQueue[["asyncio.Queue"]]
+        Writer["JSONL Writer"]
+        Transform["Transform / Load"]
+
+        Scheduler --> Crawler
+        Crawler --> RecordQueue
+        RecordQueue --> Writer
+        Writer --> Transform
     end
 
-    subgraph Storage[永続化]
-        Stage[("観測ログ・seed候補<br/>PostgreSQL")]
-        DB[("検索用 PostgreSQL<br/>universities / degree_programs<br/>tuition_patterns / mapping")]
+    subgraph LocalStorage["Local Storage"]
+        JSONL[("extracted_records_*.jsonl")]
+        Logs[("logs")]
     end
 
-    subgraph Delivery[提供]
-        API["FastAPI<br/>/search /program/{id} /health"]
-        UI["静的 Web UI<br/>webpage/"]
+    subgraph Database["PostgreSQL"]
+        Seeds[("seed_urls")]
+        Observations[("observation data")]
+        SearchData[("normalized search data")]
     end
 
-    Sites --> Observer
-    Observer --> Queue
-    Queue --> Promotion
-    Promotion --> Seed
-    Seed --> Scheduler
-    Scheduler --> Searcher
-    Searcher --> JSONL
-    Observer --> Gate
-    Gate --> Stage
-    Stage --> Promotion
+    subgraph Delivery["Application"]
+        API["FastAPI"]
+        UI["Web UI"]
+
+        SearchData --> API
+        API --> UI
+    end
+
+    Web --> Observer
+    Web --> Crawler
+
+    QualityGate --> Observations
+    QualityGate --> Seeds
+
+    Seeds --> Scheduler
+
+    Writer --> JSONL
     JSONL --> Transform
-    Transform --> DB
-    Stage --> DB
-    DB --> API
-    API --> UI
+    Transform --> SearchData
 ```
 
 ### キューとデータ保持場所
