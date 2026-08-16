@@ -32,3 +32,9 @@ results.json
 # OS
 .DS_Store
 Thumbs.db
+
+#terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
