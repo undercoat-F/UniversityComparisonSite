@@ -1173,7 +1173,7 @@ async def run_url_task(site: SiteState, task: URLTask, session: httpx.AsyncClien
                     pass
             if not should_exclude_course_page(task.url, page_record.get("title", "")):
                 if page_record.get("degrees"):
-                    site.add_extracted_record(page_record)
+                    await site.add_extracted_record(page_record)
                     extracted_records.append(page_record)
 
         site.record_links(task.url, links)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional
 from urllib.robotparser import RobotFileParser
@@ -64,7 +65,7 @@ class SiteState:
     start_urls: list[str]
     run_id: Optional[int] = None
     queue_logger: Optional[Any] = None
-    record_sink: Optional[Callable[[str, dict[str, Any]], None]] = None
+    record_sink: Optional[Callable[[str, dict[str, Any]], Awaitable[None]]] = None
     error_sink: Optional[Callable[[str, str], None]] = None
     error_buffer_limit: int = 200
     retain_extracted_records: bool = True
@@ -243,13 +244,13 @@ class SiteState:
         self.tag_class_logged_urls.clear()
         self.memory_released = True
 
-    def add_extracted_record(self, record: dict[str, Any]) -> None:
+    async def add_extracted_record(self, record: dict[str, Any]) -> None:
         self.extracted_record_count_total += 1
         degrees = record.get("degrees", [])
         if isinstance(degrees, list):
             self.extracted_degree_count_total += len(degrees)
         if self.record_sink is not None:
-            self.record_sink(self.domain, record)
+            await self.record_sink(self.domain, record)
         if self.retain_extracted_records:
             self.extracted_records.append(record)
 

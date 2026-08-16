@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import psycopg2
+from dataclasses import dataclass
 from datetime import datetime
 import traceback
 from urllib.parse import urlparse
@@ -187,13 +188,72 @@ def filter_targets_by_recent_universities(targets: list[tuple[str, int]], months
 
 
 def summarize_extractions(site_states):
-    total_records = sum(getattr(site, "extracted_record_count_total", len(site.extracted_records)) for site in site_states)
-    total_degrees = sum(getattr(site, "extracted_degree_count_total", 0) for site in site_states)
+    total_records = sum(
+        getattr(site, "extracted_record_count_total", len(site.extracted_records))
+        for site in site_states
+    )
+    total_degrees = sum(
+        getattr(site, "extracted_degree_count_total", 0)
+        for site in site_states
+    )
     if total_degrees == 0:
         for site in site_states:
             for record in site.extracted_records:
                 total_degrees += len(record.get("degrees", []))
     return total_records, total_degrees
+
+
+@dataclass
+class JsonlRecordWriter:
+    record_fp: object
+    counters: dict[str, int]
+    max_queue_size: int = 1000
+
+    def __post_init__(self) -> None:
+        self.queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=self.max_queue_size)
+        self.task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        self.task = asyncio.create_task(self._run())
+
+    async def _run(self) -> None:
+        while True:
+            line = await self.queue.get()
+            try:
+                if line is None:
+                    return
+                await asyncio.to_thread(self.record_fp.write, line)
+            finally:
+                self.queue.task_done()
+
+    async def write_record(self, domain: str, record: dict) -> None:
+        degrees = record.get("degrees", [])
+        degree_count = len(degrees) if isinstance(degrees, list) else 0
+        payload = {
+            "domain": domain,
+            "url": record.get("url"),
+            "title": record.get("title"),
+            "timestamp": record.get("timestamp"),
+            "country": record.get("country"),
+            "degree_count": degree_count,
+            "degrees": degrees if isinstance(degrees, list) else [],
+        }
+        await self.queue.put(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.counters["records"] += 1
+        self.counters["degrees"] += degree_count
+
+    async def close(self) -> None:
+        await self.queue.join()
+        await self.queue.put(None)
+        if self.task is not None:
+            await self.task
+
+
+def _build_record_sink(writer: JsonlRecordWriter):
+    async def _record_sink(domain: str, record: dict):
+        await writer.write_record(domain, record)
+
+    return _record_sink
 
 
 def _write_crawl_start_log(log_dt: str, started_at: str, target_count: int) -> None:
@@ -233,26 +293,6 @@ def _write_summary_file(summary_path: str, site_states, total_records: int, tota
             )
 
 
-def _build_record_sink(record_fp, counters: dict[str, int]):
-    def _record_sink(domain: str, record: dict):
-        degrees = record.get("degrees", [])
-        degree_count = len(degrees) if isinstance(degrees, list) else 0
-        counters["records"] += 1
-        counters["degrees"] += degree_count
-        payload = {
-            "domain": domain,
-            "url": record.get("url"),
-            "title": record.get("title"),
-            "timestamp": record.get("timestamp"),
-            "country": record.get("country"),
-            "degree_count": degree_count,
-            "degrees": degrees if isinstance(degrees, list) else [],
-        }
-        record_fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-    return _record_sink
-
-
 def _build_error_sink(log_dt: str):
     def _error_sink(domain: str, message: str):
         write_etl_error_message(domain, "crawl", message, log_dt)
@@ -278,8 +318,11 @@ async def run_etl(*, persist_summary: bool = True):
     retain_extracted_records = (_env_int("ETL_RETAIN_EXTRACTED_RECORDS", 0) != 0)
 
     monitor_state = start_resource_monitor(log_dt)
+    queue_size = max(1, _env_int("ETL_RECORD_QUEUE_MAXSIZE", 1000))
     with open(jsonl_path, "w", encoding="utf-8") as record_fp:
-        record_sink = _build_record_sink(record_fp, counters)
+        record_writer = JsonlRecordWriter(record_fp, counters, max_queue_size=queue_size)
+        await record_writer.start()
+        record_sink = _build_record_sink(record_writer)
         error_sink = _build_error_sink(log_dt)
 
         try:
@@ -294,6 +337,7 @@ async def run_etl(*, persist_summary: bool = True):
             write_etl_error_log("ALL", "dispatcher", e, log_dt)
             raise
         finally:
+            await record_writer.close()
             stop_resource_monitor(monitor_state)
 
     for site in site_states:
