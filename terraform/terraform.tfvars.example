@@ -1,0 +1,6 @@
+ami_id                    = "ami-xxxxxxxxxxxxxxxxx"
+subnet_id                 = "subnet-xxxxxxxxxxxxxxxxx"
+vpc_id                    = "vpc-xxxxxxxxxxxxxxxxx"
+security_group_name       = "example-security-group"
+security_group_description = "Security group for the crawler"
+ssh_allowed_cidr          = "203.0.113.10/32"
