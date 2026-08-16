@@ -35,13 +35,16 @@ flowchart LR
     subgraph Collection[収集・探索]
         Observer["Observer<br/>情報源の観測・候補発見"]
         Queue["InMemoryObserveQueue<br/>プロセス内 FIFO キュー"]
-        Searcher["Searcher / Crawler<br/>URL取得・HTML解析"]
+        Promotion["Quality Gate / Seed Promotion<br/>品質を満たす候補をseed_urlsへ登録"]
+        Seed[(seed_urls<br/>PostgreSQL)]
+        Scheduler["ETL Scheduler<br/>seed_urlsからenabled URLを取得"]
+        Searcher["Crawler<br/>URL取得・HTML解析"]
     end
 
     subgraph Processing[変換・品質管理]
         JSONL["抽出結果 JSONL<br/>実行ログディレクトリ"]
         Transform["ETL<br/>JSON -> rows 変換"]
-        Gate["Quality Gate<br/>エラー率・取得率・API使用量を判定"]
+        Gate["Observer Quality Gate<br/>エラー率・取得率・API使用量を判定"]
     end
 
     subgraph Storage[永続化]
@@ -56,11 +59,14 @@ flowchart LR
 
     Sites --> Observer
     Observer --> Queue
-    Queue --> Searcher
+    Queue --> Promotion
+    Promotion --> Seed
+    Seed --> Scheduler
+    Scheduler --> Searcher
     Searcher --> JSONL
-    Searcher --> Gate
+    Observer --> Gate
     Gate --> Stage
-    Gate -->|品質を満たした seed| Observer
+    Stage --> Promotion
     JSONL --> Transform
     Transform --> DB
     Stage --> DB
@@ -74,12 +80,15 @@ flowchart LR
 | --- | --- | --- |
 | 観測対象 URL | `observer/observe_supervisor.py` の設定 | Observer が処理する入力 |
 | 観測結果の一時項目 | `InMemoryObserveQueue` | Observer から Searcher へ渡すプロセス内 FIFO キュー |
+| クロール対象 URL | PostgreSQL の `seed_urls` | Observer の品質判定後に登録され、ETL Scheduler が `enabled = 1` の URL を読み込む |
 | 抽出途中のデータ | `log/extracted_records_*.jsonl` | ETL の入力、再実行時の中間成果物 |
 | 実行・エラー情報 | `log/` と PostgreSQL の観測ログテーブル | 取得状況、エラー、品質判定の追跡 |
 | 検索用データ | PostgreSQL | 大学、プログラム、授業料、関連付けを正規化して保持 |
 | 画面 | `webpage/` | API を呼び出す静的フロントエンド |
 
 現在のキューは `deque` を使ったプロセス内実装です。プロセス終了後も残る外部キューではないため、複数ワーカー間の共有や再配送はまだ行っていません。将来の水平分散では AWS SQS などへの置き換えを検討しています。
+
+通常の ETL 実行では、まず Scheduler が PostgreSQL の `seed_urls` テーブルから `enabled = 1` の `root_url` と探索深度を読み込みます。その URL を Crawler が探索し、抽出結果を `extracted_records_*.jsonl` へ保存します。JSONL は探索対象 URL の入力ではなく、クロール後の抽出結果を ETL の DB 投入ステージへ渡す中間データです。`--skip-crawl` を指定した場合だけ、既存の JSONL を読み込んでクロールを省略します。
 
 ## 3. 主要機能
 
@@ -245,6 +254,7 @@ terraform plan
 - **検索 API とデータの公開**: 認証、レート制限、CORS の許可先を本番向けに見直し、公開 API として運用する
 - **観測性の強化**: 実行時間、URL 単位の成功率、DB 投入件数をメトリクスとして継続的に可視化する
 - **Terraform 管理範囲の拡大**: VPC、Subnet、IAM、監視設定などを必要性とリスクを確認しながら段階的にコード化する
+- **CICDの更新**: railwayデプロイ時のままCICDを更新していないため、テストの更新が必要
 
 ## リポジトリ構成
 
