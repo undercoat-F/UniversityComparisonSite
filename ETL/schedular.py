@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import psycopg2
+import time
 from dataclasses import dataclass
 from datetime import datetime
 import traceback
@@ -293,6 +294,52 @@ def _write_summary_file(summary_path: str, site_states, total_records: int, tota
             )
 
 
+def build_crawl_summary(
+    site_states,
+    *,
+    target_url_count: int,
+    total_records: int,
+    total_degrees: int,
+    started_at: str,
+    finished_at: str,
+    elapsed_seconds: float,
+) -> dict:
+    domains = []
+    for site in sorted(site_states, key=lambda item: item.domain):
+        successful_requests = site.success_count
+        failed_requests = site.error_count
+        domains.append({
+            "domain": site.domain,
+            "visited_url_count": successful_requests + failed_requests,
+            "unique_explored_url_count": site.visited_count_total,
+            "successful_requests": successful_requests,
+            "failed_requests": failed_requests,
+            "extracted_records": site.extracted_record_count_total,
+            "extracted_degrees": site.extracted_degree_count_total,
+            "request_elapsed_seconds": round(site.total_time, 3),
+        })
+
+    return {
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "target_url_count": target_url_count,
+        "visited_url_count": sum(item["visited_url_count"] for item in domains),
+        "unique_explored_url_count": sum(item["unique_explored_url_count"] for item in domains),
+        "successful_requests": sum(item["successful_requests"] for item in domains),
+        "failed_requests": sum(item["failed_requests"] for item in domains),
+        "extracted_records": total_records,
+        "extracted_degrees": total_degrees,
+        "domains": domains,
+    }
+
+
+def write_crawl_summary_file(summary_path: str, summary: dict) -> None:
+    with open(summary_path, "w", encoding="utf-8") as sf:
+        json.dump(summary, sf, ensure_ascii=False, indent=2)
+        sf.write("\n")
+
+
 def _build_error_sink(log_dt: str):
     def _error_sink(domain: str, message: str):
         write_etl_error_message(domain, "crawl", message, log_dt)
@@ -306,10 +353,12 @@ async def run_etl(*, persist_summary: bool = True):
     skip_months = _env_int(RECENT_SKIP_MONTHS_ENV, 6)
     targets = filter_targets_by_recent_universities(targets, skip_months)
     ts_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_started_at = time.monotonic()
     print(f"[SCHEDULER] ETL start targets={len(targets)}", flush=True)
     os.makedirs("log", exist_ok=True)
     jsonl_path = os.path.join("log", f"extracted_records_{log_dt}.jsonl")
     summary_path = os.path.join("log", f"extracted_summary_{log_dt}.txt") if persist_summary else None
+    crawl_summary_path = os.path.join("log", f"crawl_summary_{log_dt}.json")
     counters = {"records": 0, "degrees": 0}
 
     _write_crawl_start_log(log_dt=log_dt, started_at=ts_start, target_count=len(targets))
@@ -357,6 +406,16 @@ async def run_etl(*, persist_summary: bool = True):
         _write_summary_file(summary_path, site_states, total_records, total_degrees)
 
     ts_end = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    crawl_summary = build_crawl_summary(
+        site_states,
+        target_url_count=len(targets),
+        total_records=total_records,
+        total_degrees=total_degrees,
+        started_at=ts_start,
+        finished_at=ts_end,
+        elapsed_seconds=time.monotonic() - run_started_at,
+    )
+    write_crawl_summary_file(crawl_summary_path, crawl_summary)
     _write_crawl_finish_log(
         log_dt=log_dt,
         finished_at=ts_end,
@@ -372,6 +431,7 @@ async def run_etl(*, persist_summary: bool = True):
         print(f"Extracted JSONL: {jsonl_path}")
     if summary_path:
         print(f"Extracted summary: {summary_path}")
+    print(f"Crawl summary: {crawl_summary_path}")
     if monitor_state:
         print(f"Resource log: {monitor_state[2]}")
 
@@ -379,6 +439,7 @@ async def run_etl(*, persist_summary: bool = True):
         "log_dt": log_dt,
         "jsonl_path": jsonl_path,
         "summary_path": summary_path,
+        "crawl_summary_path": crawl_summary_path,
         "total_records": total_records,
         "total_degrees": total_degrees,
         "resource_log_path": monitor_state[2] if monitor_state else None,

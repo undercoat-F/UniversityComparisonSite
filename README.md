@@ -95,6 +95,7 @@ flowchart LR
 | 観測結果の一時項目 | `InMemoryObserveQueue` | Observer から Searcher へ渡すプロセス内 FIFO キュー |
 | クロール対象 URL | PostgreSQL の `seed_urls` | Observer の品質判定後に登録され、ETL Scheduler が `enabled = 1` の URL を読み込む |
 | 抽出途中のデータ | `log/extracted_records_*.jsonl` | ETL の入力、再実行時の中間成果物 |
+| クロールサマリー | `log/crawl_summary_*.json` | 全体・ドメイン別の訪問数、成功・失敗数、抽出件数、実行時間 |
 | 実行・エラー情報 | `log/` と PostgreSQL の観測ログテーブル | 取得状況、エラー、品質判定の追跡 |
 | 検索用データ | PostgreSQL | 大学、プログラム、授業料、関連付けを正規化して保持 |
 | 画面 | `webpage/` | API を呼び出す静的フロントエンド |
@@ -175,6 +176,8 @@ flowchart LR
 ## 6. 規模・実測値
 
 収集対象や実行時間は実行条件によって変わるため、固定値を README に埋め込まず、実行ログから確認できる形にしています。ETL のログには処理レコード数、学位数、チャンク数、DB への投入数が出力されます。
+
+各クロール後には `log/crawl_summary_<timestamp>.json` を出力します。全体とドメイン別に、総訪問URL数、重複除外後の探索数、成功・失敗リクエスト数、抽出レコード・学位数、実行時間を記録します。総訪問URL数は成功・失敗を含むリクエスト試行数で、探索数はクローラが重複排除したURL数です。
 
 ```text
 [ETL] Stage 1/3 complete: records=<records> degrees=<degrees>

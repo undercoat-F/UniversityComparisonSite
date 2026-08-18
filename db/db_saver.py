@@ -375,6 +375,8 @@ def _insert_programs_rows(conn, rows, university_id_map):
     id_map = {}
     try:
         payload = []
+        csv_ids_by_natural_key = {}
+        csv_ids_by_representative_id = {}
         for row in rows:
             csv_id = str(row.get("id", "")).strip()
             csv_uni_id = str(row.get("university_id", "")).strip()
@@ -393,6 +395,19 @@ def _insert_programs_rows(conn, rows, university_id_map):
             source_url = str(row.get("source_url", "")).strip()
             last_seen = parse_optional_timestamp(row.get("last_seen", ""))
             quality_flag = str(row.get("quality_flag", "high")).strip() or "high"
+            natural_key = (
+                int(db_uni_id),
+                source_url,
+                program_name,
+                course_type,
+                bool(is_online),
+            )
+            if natural_key in csv_ids_by_natural_key:
+                csv_ids_by_natural_key[natural_key].append(csv_id)
+                continue
+
+            csv_ids_by_natural_key[natural_key] = [csv_id]
+            csv_ids_by_representative_id[csv_id] = csv_ids_by_natural_key[natural_key]
             payload.append(
                 (
                     csv_id,
@@ -448,7 +463,9 @@ def _insert_programs_rows(conn, rows, university_id_map):
         for chunk in _chunked(payload, batch_size):
             execute_values(cursor, sql_stmt, chunk)
             for csv_id, db_id in cursor.fetchall():
-                id_map[str(csv_id)] = int(db_id)
+                csv_id = str(csv_id)
+                for original_csv_id in csv_ids_by_representative_id[csv_id]:
+                    id_map[original_csv_id] = int(db_id)
             inserted += len(chunk)
 
         conn.commit()
