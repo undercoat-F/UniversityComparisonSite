@@ -290,7 +290,7 @@ def _write_summary_file(summary_path: str, site_states, total_records: int, tota
             sf.write(
                 f"domain={site.domain} records={site.extracted_record_count_total} "
                 f"success={site.success_count} errors={site.error_count} "
-                f"fallback={site.fallback_count} sitemap_candidates={len(site.sitemap_candidates)}\n"
+                f"fallback={site.fallback_count} sitemap_candidates={site.sitemap_candidate_count}\n"
             )
 
 
@@ -394,7 +394,7 @@ async def run_etl(*, persist_summary: bool = True):
             "[SCHEDULER] "
             f"domain={site.domain} success={site.success_count} errors={site.error_count} "
             f"fallback={site.fallback_count} visited={site.visited_count_total} "
-            f"sitemap_candidates={len(site.sitemap_candidates)}"
+            f"sitemap_candidates={site.sitemap_candidate_count}"
         )
 
     total_records = counters["records"]

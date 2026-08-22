@@ -47,7 +47,7 @@ async def _probe_one(site, sem: asyncio.Semaphore) -> ProbeResult:
         elapsed_sec=elapsed,
         start_url_count=len(site.start_urls),
         sitemap_url_count=len(site.sitemap_urls),
-        candidate_count=len(site.sitemap_candidates),
+        candidate_count=site.sitemap_candidate_count,
         error=error,
     )
 

@@ -107,7 +107,7 @@ async def _seed_sitemaps_with_limits(sites: list[SiteState]) -> tuple[int, int]:
                 flush=True,
             )
 
-    seeded_total = sum(len(site.sitemap_candidates) for site in sites)
+    seeded_total = sum(site.sitemap_candidate_count for site in sites)
     return seeded_total, failed
 
 def build_site_states(targets: Iterable[tuple[str, int]], *, enqueue_budget: QueueBudget | None = None) -> list[SiteState]:
@@ -202,6 +202,9 @@ async def run_dispatcher(
     domain_timeout_sec = _env_int("ETL_DOMAIN_MAX_SECONDS", 0, 0)
     stall_guard_sec = _env_int("ETL_STALL_GUARD_SEC", 900, 0)
     stall_site_sample = _env_int("ETL_STALL_SITE_SAMPLE", 5)
+    memory_pressure_max_wait_sec = _env_int(
+        "ETL_MEMORY_PRESSURE_MAX_WAIT_SEC", 300, 0
+    )
 
     pending_queue_limit = _env_int("ETL_MAXPENDING_QUEUE_ITEMS", 2000)
     memory_controller, memory_check_interval_sec = _memory_pressure_controller()
@@ -261,6 +264,7 @@ async def run_dispatcher(
     domain_started_at: dict[str, float | None] = {site.domain: None for site in sites}
     last_progress_at = started_at
     stalled_since: float | None = None
+    memory_pressure_since: float | None = None
     last_completed_total = -1
     last_visited_total = -1
     last_pending_total = -1
@@ -410,15 +414,33 @@ async def run_dispatcher(
                     memory_paused, memory_state_changed = memory_controller.should_pause(rss_mb)
                     if memory_paused:
                         if memory_state_changed:
+                            memory_pressure_since = now
                             print(
                                 "[DISPATCHER][WARN] "
                                 f"memory_high_watermark rss={rss_mb:.1f}MB "
                                 f"limit={memory_controller.high_watermark_mb}MB; pausing new workers",
                                 flush=True,
                             )
+                        elif (
+                            memory_pressure_max_wait_sec > 0
+                            and memory_pressure_since is not None
+                            and now - memory_pressure_since >= memory_pressure_max_wait_sec
+                        ):
+                            run_status = "stalled"
+                            run_notes = (
+                                f"memory_pressure_timeout elapsed={int(now - started_at)}s "
+                                f"rss={rss_mb:.1f}MB limit={memory_controller.high_watermark_mb}MB "
+                                f"waited={int(now - memory_pressure_since)}s "
+                                f"pending={pending_total} in_progress={in_progress_total}"
+                            )
+                            print(f"[DISPATCHER][WARN] {run_notes}", flush=True)
+                            for line in _stuck_site_lines(sites, limit=stall_site_sample):
+                                print(f"[DISPATCHER][STUCK] {line}", flush=True)
+                            break
                         gc.collect()
                         await asyncio.sleep(memory_check_interval_sec)
                         continue
+                    memory_pressure_since = None
                     if memory_state_changed:
                         print(
                             "[DISPATCHER] "

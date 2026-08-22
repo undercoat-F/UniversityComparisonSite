@@ -107,6 +107,7 @@ class SiteState:
     robots_ready: bool = False
     sitemap_urls: list[str] = field(default_factory=list)
     sitemap_candidates: list[str] = field(default_factory=list)
+    sitemap_candidate_count: int = 0
     sitemap_attempted: bool = False
 
     extraction_drop_stats: dict[str, int] = field(

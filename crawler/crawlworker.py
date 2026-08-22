@@ -833,6 +833,8 @@ def _collect_sitemap_urls(
     started_at: float,
     max_duration_sec: int,
     max_sitemaps: int,
+    max_candidates: int,
+    candidate_seen: set[str],
 ) -> list[str]:
     root = ET.fromstring(xml_text)
     tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
@@ -844,8 +846,14 @@ def _collect_sitemap_urls(
             loc_elem = url_elem.find(f"{ns}loc")
             if loc_elem is not None and loc_elem.text:
                 loc = loc_elem.text.strip()
-                if urlparse(loc).netloc == allowed_netloc:
+                if (
+                    len(candidate_seen) < max_candidates
+                    and loc not in candidate_seen
+                    and urlparse(loc).netloc == allowed_netloc
+                    and any(keyword in loc.lower() for keyword in SITEMAP_PRIORITY_KEYWORDS)
+                ):
                     urls.append(loc)
+                    candidate_seen.add(loc)
         return urls
 
     if tag == "sitemapindex":
@@ -878,6 +886,8 @@ def _collect_sitemap_urls(
                         started_at=started_at,
                         max_duration_sec=max_duration_sec,
                         max_sitemaps=max_sitemaps,
+                        max_candidates=max_candidates,
+                        candidate_seen=candidate_seen,
                     )
                 )
             except Exception:
@@ -932,6 +942,7 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
 
         collected_urls = []
         visited_sitemaps = set(site.sitemap_urls)
+        candidate_seen: set[str] = set()
         for sitemap_url in site.sitemap_urls:
             if time.perf_counter() - started_at >= SITEMAP_SEED_MAX_SECONDS:
                 truncated_by_time = True
@@ -955,6 +966,8 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
                         started_at=started_at,
                         max_duration_sec=SITEMAP_SEED_MAX_SECONDS,
                         max_sitemaps=SITEMAP_SEED_MAX_SITEMAPS,
+                        max_candidates=SITEMAP_SEED_MAX_CANDIDATES_PER_DOMAIN,
+                        candidate_seen=candidate_seen,
                     )
                 )
                 if time.perf_counter() - started_at >= SITEMAP_SEED_MAX_SECONDS:
@@ -983,11 +996,12 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
         )
 
     candidates = await asyncio.to_thread(_load_candidates)
-    site.sitemap_candidates = candidates
+    site.sitemap_candidate_count = len(candidates)
     for candidate_url in candidates:
         if should_queue_url(site, candidate_url):
             site.enqueue(candidate_url, depth=0, discovered_from="sitemap")
-    return site.sitemap_candidates
+    candidates.clear()
+    return candidates
 
 
 async def fetch_with_fallback(
