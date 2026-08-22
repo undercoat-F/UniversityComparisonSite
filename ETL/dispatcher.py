@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import time
 from dataclasses import dataclass
@@ -8,6 +9,11 @@ from typing import Iterable
 from urllib.parse import urlparse
 
 import httpx
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - optional dependency fallback
+    psutil = None
 
 from crawler.crawlworker import DEFAULT_HEADERS, seed_sitemap_candidates, worker
 from dataclass.dataclass import QueueBudget, SiteState
@@ -29,6 +35,39 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return max(minimum, int(raw))
     except ValueError:
         return default
+
+
+@dataclass
+class MemoryPressureController:
+    high_watermark_mb: int
+    resume_watermark_mb: int
+    is_paused: bool = False
+
+    def should_pause(self, rss_mb: float) -> tuple[bool, bool]:
+        """Return whether dispatch must pause and whether the state changed."""
+        was_paused = self.is_paused
+        if self.is_paused:
+            self.is_paused = rss_mb > self.resume_watermark_mb
+        else:
+            self.is_paused = rss_mb >= self.high_watermark_mb
+        return self.is_paused, self.is_paused != was_paused
+
+
+def _memory_pressure_controller() -> tuple[MemoryPressureController | None, float]:
+    if psutil is None:
+        return None, 0.0
+
+    high_watermark_mb = _env_int("ETL_MEMORY_HIGH_WATERMARK_MB", 350, 0)
+    if high_watermark_mb <= 0:
+        return None, 0.0
+
+    default_resume_mb = max(0, high_watermark_mb - 50)
+    resume_watermark_mb = _env_int(
+        "ETL_MEMORY_RESUME_WATERMARK_MB", default_resume_mb, 0
+    )
+    resume_watermark_mb = min(resume_watermark_mb, high_watermark_mb - 1)
+    check_interval_sec = float(_env_int("ETL_MEMORY_CHECK_INTERVAL_SEC", 5))
+    return MemoryPressureController(high_watermark_mb, resume_watermark_mb), check_interval_sec
 
 
 async def _seed_sitemaps_with_limits(sites: list[SiteState]) -> tuple[int, int]:
@@ -165,6 +204,8 @@ async def run_dispatcher(
     stall_site_sample = _env_int("ETL_STALL_SITE_SAMPLE", 5)
 
     pending_queue_limit = _env_int("ETL_MAXPENDING_QUEUE_ITEMS", 2000)
+    memory_controller, memory_check_interval_sec = _memory_pressure_controller()
+    process = psutil.Process(os.getpid()) if memory_controller is not None else None
     enqueue_budget = QueueBudget(limit=pending_queue_limit)
     sites = build_site_states(targets, enqueue_budget=enqueue_budget)
     for site in sites:
@@ -232,7 +273,8 @@ async def run_dispatcher(
         f"dispatcher_timeout={(str(dispatcher_timeout_sec) + 's') if dispatcher_timeout_sec > 0 else 'disabled'} "
         f"domain_timeout={(str(domain_timeout_sec) + 's') if domain_timeout_sec > 0 else 'disabled'} "
         f"stall_guard={(str(stall_guard_sec) + 's') if stall_guard_sec > 0 else 'disabled'} "
-        f"pending_limit={pending_queue_limit}",
+        f"pending_limit={pending_queue_limit} "
+        f"memory_limit={(str(memory_controller.high_watermark_mb) + 'MB') if memory_controller else 'disabled'}",
         flush=True,
     )
 
@@ -362,6 +404,28 @@ async def run_dispatcher(
                     site.release_runtime_memory()
                 if not active:
                     break
+
+                if memory_controller is not None and process is not None:
+                    rss_mb = process.memory_info().rss / (1024 * 1024)
+                    memory_paused, memory_state_changed = memory_controller.should_pause(rss_mb)
+                    if memory_paused:
+                        if memory_state_changed:
+                            print(
+                                "[DISPATCHER][WARN] "
+                                f"memory_high_watermark rss={rss_mb:.1f}MB "
+                                f"limit={memory_controller.high_watermark_mb}MB; pausing new workers",
+                                flush=True,
+                            )
+                        gc.collect()
+                        await asyncio.sleep(memory_check_interval_sec)
+                        continue
+                    if memory_state_changed:
+                        print(
+                            "[DISPATCHER] "
+                            f"memory_recovered rss={rss_mb:.1f}MB "
+                            f"resume={memory_controller.resume_watermark_mb}MB; resuming workers",
+                            flush=True,
+                        )
 
                 ready = [site for site in active if site.can_fetch()]
                 if not ready:

@@ -64,6 +64,9 @@ def _env_int(name: str, default: int, minimum: int) -> int:
 
 SITEMAP_SEED_MAX_SECONDS = _env_int("ETL_SITEMAP_SEED_MAX_SECONDS", 60, 1)
 SITEMAP_SEED_MAX_SITEMAPS = _env_int("ETL_SITEMAP_SEED_MAX_SITEMAPS", 40, 1)
+SITEMAP_SEED_MAX_CANDIDATES_PER_DOMAIN = _env_int(
+    "ETL_SITEMAP_SEED_MAX_CANDIDATES_PER_DOMAIN", 500, 1
+)
 TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN = _env_int("ETL_TAG_CLASS_LOG_URL_LIMIT_PER_DOMAIN", 20, 0)
 REQUESTS_TIMEOUT_SEC = _env_int("ETL_REQUESTS_TIMEOUT_SEC", DEFAULT_TIMEOUT, 1)
 REQUESTS_ROBOTS_TIMEOUT_SEC = _env_int("ETL_REQUESTS_ROBOTS_TIMEOUT_SEC", 10, 1)
@@ -884,13 +887,17 @@ def _collect_sitemap_urls(
     return []
 
 
-def _select_likely_sitemap_candidates(urls: list[str]) -> list[str]:
+def _select_likely_sitemap_candidates(urls: list[str], max_candidates: int) -> list[str]:
     candidates = []
+    seen = set()
     for url in urls:
         lowered = url.lower()
-        if any(keyword in lowered for keyword in SITEMAP_PRIORITY_KEYWORDS):
+        if url not in seen and any(keyword in lowered for keyword in SITEMAP_PRIORITY_KEYWORDS):
             candidates.append(url)
-    return list(dict.fromkeys(candidates))
+            seen.add(url)
+            if len(candidates) >= max_candidates:
+                break
+    return candidates
 
 
 async def seed_sitemap_candidates(site: SiteState) -> list[str]:
@@ -970,7 +977,10 @@ async def seed_sitemap_candidates(site: SiteState) -> list[str]:
                 flush=True,
             )
 
-        return _select_likely_sitemap_candidates(collected_urls)
+        return _select_likely_sitemap_candidates(
+            collected_urls,
+            max_candidates=SITEMAP_SEED_MAX_CANDIDATES_PER_DOMAIN,
+        )
 
     candidates = await asyncio.to_thread(_load_candidates)
     site.sitemap_candidates = candidates
