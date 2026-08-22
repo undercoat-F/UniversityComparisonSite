@@ -463,7 +463,21 @@ async def run_dispatcher(
             raise
         finally:
             if queue_logger is not None and run_id is not None:
-                queue_logger.finish_run(run_id=run_id, status=run_status, notes=run_notes)
-                queue_logger.close()
+                try:
+                    queue_logger.finish_run(run_id=run_id, status=run_status, notes=run_notes)
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[QUEUE_LOG][WARN] could not finalize run_id={run_id}: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                try:
+                    queue_logger.close()
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[QUEUE_LOG][WARN] could not close queue logger: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
 
     return sites

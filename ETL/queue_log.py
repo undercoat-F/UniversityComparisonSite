@@ -57,11 +57,37 @@ class QueueLogStore:
             set_search_path(cursor, get_etl_schema(), get_public_schema())
         return self._conn
 
+    @staticmethod
+    def _close_cursor(cursor) -> None:
+        if cursor is None:
+            return
+        try:
+            cursor.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _rollback_if_open(conn) -> None:
+        if conn is None or getattr(conn, "closed", 1) != 0:
+            return
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    def _discard_connection(self) -> None:
+        conn = self._conn
+        self._conn = None
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:
+            pass
+
     def close(self) -> None:
         self.flush()
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        self._discard_connection()
 
     def init_db(self) -> None:
         with open(self.schema_path, "r", encoding="utf-8") as f:
@@ -72,11 +98,11 @@ class QueueLogStore:
             cur.execute(schema_sql)
             conn.commit()
         except Exception as e:
-            conn.rollback()
+            self._rollback_if_open(conn)
             self.dberror = e
             raise
         finally:
-            cur.close()
+            self._close_cursor(cur)
 
     def create_run(self, root_seed_count: int, notes: str = "") -> int:
         self.flush()
@@ -96,33 +122,44 @@ class QueueLogStore:
             return run_id
         
         except Exception as e:
-            conn.rollback()
+            self._rollback_if_open(conn)
             self.dberror = e
             raise
 
         finally:
-            cur.close()
+            self._close_cursor(cur)
 
     def finish_run(self, run_id: int, status: str, notes: str = "") -> None:
         self.flush()
-        conn = self._connect()
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                f"""
-                UPDATE {CRAWL_RUNS_TABLE}
-                SET status = %s, finished_at = NOW(), notes = COALESCE(NULLIF(%s, ''), notes)
-                    WHERE id = %s
-                    """,
+        for attempt in range(2):
+            conn = None
+            cur = None
+            try:
+                conn = self._connect()
+                cur = conn.cursor()
+                cur.execute(
+                    f"""
+                    UPDATE {CRAWL_RUNS_TABLE}
+                    SET status = %s, finished_at = NOW(), notes = COALESCE(NULLIF(%s, ''), notes)
+                        WHERE id = %s
+                        """,
                     (status, notes, run_id),
                 )
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            self.dberror = e
-            raise
-        finally:
-            cur.close()
+                conn.commit()
+                return
+            except Exception as exc:
+                self._rollback_if_open(conn)
+                self._discard_connection()
+                self.dberror = exc
+                if attempt == 0:
+                    print(
+                        f"[QUEUE_LOG][WARN] finish_run retry after {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    continue
+                raise
+            finally:
+                self._close_cursor(cur)
 
     def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:
         self._buffer.append((kind, payload))
@@ -555,7 +592,8 @@ class QueueLogStore:
                 flush=True,
             )
         except Exception as e:
-            conn.rollback()
+            self._rollback_if_open(conn)
+            self._discard_connection()
             self._buffer = items + self._buffer
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             print(
@@ -573,7 +611,7 @@ class QueueLogStore:
             )
             raise
         finally:
-            cur.close()
+            self._close_cursor(cur)
 
     @staticmethod
     def _extract_domain(url: str) -> str:
