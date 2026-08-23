@@ -11,6 +11,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     env:
+      PYTHONPATH: ${{ github.workspace }}
       SEED_OBSERVE_RUNS_TABLE: ci_seed_observe_runs
       SEED_OBSERVE_RESULTS_TABLE: ci_seed_observe_results
       SEED_SEARCH_RUNS_TABLE: ci_seed_search_runs
