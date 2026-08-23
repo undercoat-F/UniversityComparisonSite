@@ -27,20 +27,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-ci.txt
 
-      - name: Run stable test suite
+      - name: Run all tests
         run: |
-          pytest -q \
-            tests/test_jsontocsv.py \
-            tests/test_generate_csvs.py \
-            tests/test_extract_page.py
+          pytest -q tests
 
-      - name: Future route-profile test (optional)
-        run: |
-          if [ -f tests/test_site_profile.py ]; then
-            pytest -q tests/test_site_profile.py
-          else
-            echo "tests/test_site_profile.py not found; skipped."
-          fi
+      - name: Compile Python modules
+        run: python -m compileall -q crawler ETL dataclass db observer search
 
       - name: API import smoke test
         env:
