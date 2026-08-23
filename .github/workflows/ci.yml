@@ -10,6 +10,24 @@ jobs:
   tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    env:
+      SEED_OBSERVE_RUNS_TABLE: ci_seed_observe_runs
+      SEED_OBSERVE_RESULTS_TABLE: ci_seed_observe_results
+      SEED_SEARCH_RUNS_TABLE: ci_seed_search_runs
+      SEED_URLS_TABLE: ci_seed_urls
+      UNIVERSITIES_TABLE: ci_universities
+      DEGREE_PROGRAMS_TABLE: ci_degree_programs
+      TUITION_PATTERNS_TABLE: ci_tuition_patterns
+      PROGRAM_TUITION_MAP_TABLE: ci_program_tuition_map
+      CRAWL_RUNS_TABLE: ci_crawl_runs
+      CRAWL_QUEUE_STATE_TABLE: ci_crawl_queue_state
+      CRAWL_ATTEMPTS_TABLE: ci_crawl_attempts
+      CRAWL_EDGES_TABLE: ci_crawl_edges
+      CRAWL_FAILURES_TABLE: ci_crawl_failures
+      CRAWL_TAG_KEYWORD_HITS_TABLE: ci_crawl_tag_keyword_hits
+      CRAWL_DOMAIN_TAG_SCORES_TABLE: ci_crawl_domain_tag_scores
+      CRAWL_TAG_CLASS_COUNTS_TABLE: ci_crawl_tag_class_counts
+      CRAWL_DOMAIN_CLASS_COUNTS_TABLE: ci_crawl_domain_class_counts
 
     steps:
       - name: Checkout
