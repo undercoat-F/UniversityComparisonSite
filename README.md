@@ -227,12 +227,38 @@ python -m observer.observer
 ### Docker Compose で実行
 
 ```powershell
-docker compose up --build api
+# .env に公開する完全修飾ドメイン名を設定する
+# 例: DOMAIN=degrees.example.com
+docker compose up --build -d api caddy
 docker compose --profile etl run --rm etl
 docker compose --profile observe run --rm observe
 ```
 
-API 起動後は `http://localhost:8000/`、OpenAPI は `http://localhost:8000/docs`、ヘルスチェックは `http://localhost:8000/health` で確認できます。
+ローカルでは API を `http://localhost:8000/`、OpenAPI を `http://localhost:8000/docs`、ヘルスチェックを `http://localhost:8000/health` で確認できます。API のホスト公開はループバックアドレスだけに限定されるため、EC2 の外部からは Caddy の HTTPS エンドポイントを利用します。
+
+### EC2 で Caddy による HTTPS 公開
+
+1. Elastic IP を EC2 に割り当て、公開するドメインの A レコードをその IP アドレスへ向けます。証明書発行時に Caddy が到達可能になるまで DNS の反映を待ちます。
+2. EC2 で `.env` に `DOMAIN=degrees.example.com` のように実際の完全修飾ドメイン名を設定します。DB の認証情報は既存どおり `.env` に置き、Git には追加しません。
+3. Terraform を適用して、Security Group の `80/tcp`、`443/tcp`、`443/udp` を許可します。`web_allowed_cidr` は既定で全インターネットからのアクセスを許可します。
+
+    ```powershell
+    cd terraform
+    terraform fmt -check
+    terraform validate
+    terraform apply
+    ```
+
+4. プロジェクト直下でサービスを起動し、Caddy の証明書取得を確認します。
+
+    ```powershell
+    docker compose up --build -d api caddy
+    docker compose logs --follow caddy
+    ```
+
+5. 外部ネットワークから `https://degrees.example.com/health` と `https://degrees.example.com/docs` にアクセスします。`http://` は Caddy が HTTPS へリダイレクトします。
+
+`caddy_data` Docker volume に証明書が保存されるため、`docker compose down` の後も証明書は維持されます。`docker compose down -v` は証明書を削除するため、通常の更新では実行しないでください。
 
 ## 8. Terraform / AWS
 

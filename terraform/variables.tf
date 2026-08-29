@@ -21,3 +21,9 @@ variable "security_group_description" {
 variable "ssh_allowed_cidr" {
   type = string
 }
+
+variable "web_allowed_cidr" {
+  type        = string
+  description = "CIDR allowed to reach the Caddy HTTP and HTTPS listeners"
+  default     = "0.0.0.0/0"
+}

@@ -1,0 +1,8 @@
+{
+    auto_https prefer_wildcard
+}
+
+{env.DOMAIN} {
+    encode zstd gzip
+    reverse_proxy api:8000
+}

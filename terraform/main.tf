@@ -43,6 +43,45 @@ resource "aws_security_group" "crawler" {
       self             = false
       to_port          = 22
     },
+    {
+      cidr_blocks = [
+        var.web_allowed_cidr,
+      ]
+      description      = "HTTP for Caddy ACME challenges and HTTPS redirects"
+      from_port        = 80
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      protocol         = "tcp"
+      security_groups  = []
+      self             = false
+      to_port          = 80
+    },
+    {
+      cidr_blocks = [
+        var.web_allowed_cidr,
+      ]
+      description      = "HTTPS served by Caddy"
+      from_port        = 443
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      protocol         = "tcp"
+      security_groups  = []
+      self             = false
+      to_port          = 443
+    },
+    {
+      cidr_blocks = [
+        var.web_allowed_cidr,
+      ]
+      description      = "HTTP/3 served by Caddy"
+      from_port        = 443
+      ipv6_cidr_blocks = []
+      prefix_list_ids  = []
+      protocol         = "udp"
+      security_groups  = []
+      self             = false
+      to_port          = 443
+    },
   ]
 
   egress = [
