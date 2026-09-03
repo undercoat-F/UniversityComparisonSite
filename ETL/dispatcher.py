@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - optional dependency fallback
 
 from crawler.crawlworker import DEFAULT_HEADERS, seed_sitemap_candidates, worker
 from dataclass.dataclass import QueueBudget, SiteState
+from ETL.dedup_store import get_dedup_store
 from ETL.queue_log import QueueLogStore
 
 
@@ -259,6 +260,20 @@ async def run_dispatcher(
             for site in sites:
                 site.queue_logger = queue_logger
                 site.run_id = run_id
+
+    dedup_enabled = _env_flag("DEDUP_ENABLED", True) and bool(os.getenv("REDIS_URL", "").strip())
+    if dedup_enabled:
+        try:
+            dedup_store = get_dedup_store()
+            for site in sites:
+                site.dedup_store = dedup_store
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[DEDUP] disabled: could not initialize Redis dedup store: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+    else:
+        print("[DEDUP] disabled: REDIS_URL is not set", flush=True)
 
     started_at = time.monotonic()
     domain_started_at: dict[str, float | None] = {site.domain: None for site in sites}

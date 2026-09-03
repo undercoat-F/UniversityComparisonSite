@@ -4,9 +4,12 @@ import time
 from collections import deque
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 from urllib.robotparser import RobotFileParser
 from enum import Enum, auto
+
+if TYPE_CHECKING:
+    from ETL.dedup_store import DedupStore
 
 
 @dataclass
@@ -70,6 +73,7 @@ class SiteState:
     error_buffer_limit: int = 200
     retain_extracted_records: bool = True
     enqueue_budget: Optional[QueueBudget] = None
+    dedup_store: Optional["DedupStore"] = None
     crawl_delay: float = 0.0
     last_access: float = 0.0
     user_agent: str = "*"
@@ -161,6 +165,10 @@ class SiteState:
             return False
         if self.enqueue_budget is not None and not self.enqueue_budget.reserve():
             return False
+        if self.dedup_store is not None and not self._mark_seen_in_dedup_store(url):
+            if self.enqueue_budget is not None:
+                self.enqueue_budget.release()
+            return False
         self.queue.append(URLTask(url=url, depth=depth, discovered_from=discovered_from))
         self.queued.add(url)
 
@@ -198,6 +206,14 @@ class SiteState:
                 pass
 
         return True
+
+    def _mark_seen_in_dedup_store(self, url: str) -> bool:
+        """Redis障害時はcrawlを止めないよう、未訪問扱い(True)にフェイルオープンする。"""
+        try:
+            return self.dedup_store.mark_seen(url)
+        except Exception as exc:  # noqa: BLE001
+            self.add_error(f"dedup_store_unavailable domain={self.domain}: {type(exc).__name__}: {exc}")
+            return True
 
     def pop_next_task(self) -> Optional[URLTask]:
         if not self.queue:

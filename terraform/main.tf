@@ -17,6 +17,7 @@ resource "aws_instance" "crawler" {
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
+  iam_instance_profile = aws_iam_instance_profile.crawl_queue.name
 
   subnet_id = var.subnet_id
   tags = {
