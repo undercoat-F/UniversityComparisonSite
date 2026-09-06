@@ -4,12 +4,15 @@ import asyncio
 import os
 
 import httpx
+from dotenv import load_dotenv
 
 from crawler.crawlworker import DEFAULT_HEADERS, ensure_robots, run_url_task
 from dataclass.dataclass import SiteState, URLTask
 from ETL.dedup_store import get_dedup_store
 from ETL.sqs_queue import TaskQueue, get_task_queue
 from ETL.worker_site_cache import DomainSiteCache
+
+load_dotenv(encoding="utf-8-sig")
 
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
