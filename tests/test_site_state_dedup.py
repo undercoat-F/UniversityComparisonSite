@@ -8,6 +8,20 @@ from dataclass.dataclass import QueueBudget, SiteState
 
 
 class TestSiteStateDedupStore(unittest.TestCase):
+    def test_start_urls_are_registered_in_dedup_store(self):
+        dedup_store = MagicMock()
+        dedup_store.mark_seen.return_value = True
+
+        site = SiteState(
+            domain="example.edu",
+            start_urls=["https://example.edu/"],
+            max_depth=2,
+            dedup_store=dedup_store,
+        )
+
+        dedup_store.mark_seen.assert_called_once_with("https://example.edu/")
+        self.assertEqual(len(site.queue), 1)
+
     def test_enqueue_rejected_when_dedup_store_reports_already_seen(self):
         dedup_store = MagicMock()
         dedup_store.mark_seen.return_value = False

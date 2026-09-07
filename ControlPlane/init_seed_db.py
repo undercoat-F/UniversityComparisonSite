@@ -8,7 +8,7 @@ from db.schema_config import get_observer_schema, get_public_schema, get_table_r
 
 load_dotenv(encoding="utf-8-sig")
 
-SCHEMA_PATH = os.path.join("ETL", "seed_urls_schema_pg.sql")
+SCHEMA_PATH = os.path.join("ControlPlane", "seed_urls_schema_pg.sql")
 SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")
 
 

@@ -16,9 +16,10 @@ except ImportError:  # pragma: no cover - optional dependency fallback
     psutil = None
 
 from crawler.crawlworker import DEFAULT_HEADERS, seed_sitemap_candidates, worker
+from crawler.distributed.dedup_store import get_dedup_store
+from crawler.distributed.sqs_queue import get_task_queue
 from dataclass.dataclass import QueueBudget, SiteState
-from ETL.dedup_store import get_dedup_store
-from ETL.queue_log import QueueLogStore
+from ControlPlane.queue_log import QueueLogStore
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -111,7 +112,12 @@ async def _seed_sitemaps_with_limits(sites: list[SiteState]) -> tuple[int, int]:
     seeded_total = sum(site.sitemap_candidate_count for site in sites)
     return seeded_total, failed
 
-def build_site_states(targets: Iterable[tuple[str, int]], *, enqueue_budget: QueueBudget | None = None) -> list[SiteState]:
+def build_site_states(
+    targets: Iterable[tuple[str, int]],
+    *,
+    enqueue_budget: QueueBudget | None = None,
+    dedup_store=None,
+) -> list[SiteState]:
     grouped: dict[str, list[tuple[str, int]]] = {}
     for url, depth in targets:
         domain = urlparse(url).netloc
@@ -121,7 +127,86 @@ def build_site_states(targets: Iterable[tuple[str, int]], *, enqueue_budget: Que
     for domain, entries in grouped.items():
         start_urls = [url for url, _ in entries]
         max_depth = max(depth for _, depth in entries)
-        sites.append(SiteState(domain=domain, start_urls=start_urls, max_depth=max_depth, enqueue_budget=enqueue_budget))
+        sites.append(
+            SiteState(
+                domain=domain,
+                start_urls=start_urls,
+                max_depth=max_depth,
+                enqueue_budget=enqueue_budget,
+                dedup_store=dedup_store,
+            )
+        )
+    return sites
+
+
+async def enqueue_initial_tasks(targets: list[tuple[str, int]]) -> list[SiteState]:
+    """初期URLとサイトマップ候補をRedisで重複排除し、SQSへ投入するControl Plane処理。"""
+    dedup_store = None
+    if _env_flag("DEDUP_ENABLED", True) and os.getenv("REDIS_URL", "").strip():
+        try:
+            dedup_store = get_dedup_store()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[PRODUCER][WARN] could not initialize dedup store: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+    else:
+        print("[PRODUCER] REDIS_URL is not set; running without dedup store", flush=True)
+
+    if not targets:
+        return []
+
+    queue_log_pg_dsn = os.getenv("PARENT_DB_OWNER_CONNECTION", "").strip()
+    if not queue_log_pg_dsn:
+        raise RuntimeError("PARENT_DB_OWNER_CONNECTION is required to create a distributed crawl run")
+    queue_logger = QueueLogStore(
+        db_path="",
+        schema_path=os.getenv("QUEUE_LOG_SCHEMA_PATH", os.path.join("ControlPlane", "queue_log_schema.sql")),
+        pg_dsn=queue_log_pg_dsn,
+        batch_size=int(os.getenv("QUEUE_LOG_BATCH_SIZE", "200")),
+        failures_only=False,
+    )
+    run_id = queue_logger.create_run(root_seed_count=len(targets), notes="distributed crawl")
+    sites = build_site_states(targets, dedup_store=dedup_store)
+    for site in sites:
+        site.run_id = run_id
+        site.queue_logger = queue_logger
+        for task in site.queue:
+            queue_logger.upsert_queue_state(
+                run_id=run_id,
+                url=task.url,
+                parent_url=task.discovered_from,
+                domain=site.domain,
+                depth=task.depth,
+                status="pending",
+                discovered_from=task.discovered_from,
+            )
+
+    print(f"[PRODUCER] seeding sitemap candidates for {len(sites)} domain(s)...", flush=True)
+    seeded_total, seeding_failed = await _seed_sitemaps_with_limits(sites)
+    print(
+        f"[PRODUCER] sitemap seeding done candidates={seeded_total} failed={seeding_failed}",
+        flush=True,
+    )
+
+    task_queue = get_task_queue()
+    queued_count = 0
+    for site in sites:
+        while site.queue:
+            task = site.queue[0]
+            task_queue.send_task(
+                run_id=run_id,
+                url=task.url,
+                depth=task.depth,
+                domain=site.domain,
+                discovered_from=task.discovered_from,
+                delay_seconds=0,
+            )
+            site.pop_next_task()
+            queued_count += 1
+
+    print(f"[PRODUCER] queued initial_tasks={queued_count}", flush=True)
+    queue_logger.close()
     return sites
 
 
@@ -211,7 +296,20 @@ async def run_dispatcher(
     memory_controller, memory_check_interval_sec = _memory_pressure_controller()
     process = psutil.Process(os.getpid()) if memory_controller is not None else None
     enqueue_budget = QueueBudget(limit=pending_queue_limit)
-    sites = build_site_states(targets, enqueue_budget=enqueue_budget)
+    dedup_store = None
+    dedup_enabled = _env_flag("DEDUP_ENABLED", True) and bool(os.getenv("REDIS_URL", "").strip())
+    if dedup_enabled:
+        try:
+            dedup_store = get_dedup_store()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[DEDUP] disabled: could not initialize Redis dedup store: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+    else:
+        print("[DEDUP] disabled: REDIS_URL is not set", flush=True)
+
+    sites = build_site_states(targets, enqueue_budget=enqueue_budget, dedup_store=dedup_store)
     for site in sites:
         site.record_sink = record_sink
         site.error_sink = error_sink
@@ -238,7 +336,7 @@ async def run_dispatcher(
                 password = os.getenv("DB_PASSWORD", "").strip()
                 port = os.getenv("DB_PORT", "5432").strip() or "5432"
                 queue_log_pg_dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require"
-        schema_path = os.getenv("QUEUE_LOG_SCHEMA_PATH", os.path.join("ETL", "queue_log_schema.sql"))
+        schema_path = os.getenv("QUEUE_LOG_SCHEMA_PATH", os.path.join("ControlPlane", "queue_log_schema.sql"))
 
         if not queue_log_pg_dsn:
             print(
@@ -260,20 +358,6 @@ async def run_dispatcher(
             for site in sites:
                 site.queue_logger = queue_logger
                 site.run_id = run_id
-
-    dedup_enabled = _env_flag("DEDUP_ENABLED", True) and bool(os.getenv("REDIS_URL", "").strip())
-    if dedup_enabled:
-        try:
-            dedup_store = get_dedup_store()
-            for site in sites:
-                site.dedup_store = dedup_store
-        except Exception as exc:  # noqa: BLE001
-            print(
-                f"[DEDUP] disabled: could not initialize Redis dedup store: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-    else:
-        print("[DEDUP] disabled: REDIS_URL is not set", flush=True)
 
     started_at = time.monotonic()
     domain_started_at: dict[str, float | None] = {site.domain: None for site in sites}

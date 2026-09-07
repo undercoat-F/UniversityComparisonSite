@@ -106,9 +106,9 @@ class _ResourceSampleWriter:
                 cursor.executemany(
                     f"""
                     INSERT INTO {self._table_ref}
-                    (log_dt, worker_id, elapsed_sec, process_cpu_percent, process_rss_mb,
+                    (run_id, log_dt, worker_id, elapsed_sec, process_cpu_percent, process_rss_mb,
                      system_cpu_percent, system_memory_percent)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     rows,
                 )
@@ -154,7 +154,12 @@ def _build_resource_sample_writer() -> "_ResourceSampleWriter | None":
     return _ResourceSampleWriter(pg_dsn=pg_dsn, table_ref=table_ref, batch_size=batch_size)
 
 
-def start_resource_monitor(log_dt: str):
+def start_resource_monitor(
+    log_dt: str,
+    *,
+    run_id: int | None = None,
+    worker_id: str | None = None,
+):
     if not _env_bool(RESOURCE_MONITOR_ENABLED_ENV, True):
         print("[MONITOR] resource monitoring disabled by env", flush=True)
         return None
@@ -165,7 +170,7 @@ def start_resource_monitor(log_dt: str):
     interval_sec = max(0.5, _env_float(RESOURCE_MONITOR_INTERVAL_ENV, 5.0))
     # DBへの書き込みはCSVより粗い間隔に間引く(既定30秒)。長時間トレンドの把握には十分で、書き込み回数を抑えられる。
     db_interval_sec = max(interval_sec, _env_float(RESOURCE_DB_INTERVAL_ENV, 30.0))
-    worker_id = os.getenv("WORKER_ID", "").strip() or socket.gethostname()
+    resolved_worker_id = worker_id or os.getenv("WORKER_ID", "").strip() or socket.gethostname()
     sample_writer = _build_resource_sample_writer()
 
     monitor_path = os.path.join("log", f"etl_resource_log_{log_dt}.csv")
@@ -216,8 +221,9 @@ def start_resource_monitor(log_dt: str):
                     if sample_writer is not None and now - last_db_write_at >= db_interval_sec:
                         sample_writer.add(
                             (
+                                run_id,
                                 log_dt,
-                                worker_id,
+                                resolved_worker_id,
                                 elapsed_sec,
                                 process_cpu_percent,
                                 process_rss_mb,

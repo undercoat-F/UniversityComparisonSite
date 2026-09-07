@@ -30,7 +30,7 @@ except Exception:
 
 from dataclass.dataclass import SeedTransformInput
 from db.schema_config import get_observer_schema, get_table_ref
-from ETL import init_seed_db
+from ControlPlane import init_seed_db
 from observer.seed_adder import _stage_rows_to_targets, add_seed_targets
 
 SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")

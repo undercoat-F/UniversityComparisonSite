@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from ETL.dispatcher import run_dispatcher
-from ETL.resource_recorder import start_resource_monitor, stop_resource_monitor
+from ControlPlane.dispatcher import enqueue_initial_tasks
+from ControlPlane.resource_recorder import start_resource_monitor, stop_resource_monitor
 from db.schema_config import get_observer_schema, get_public_schema, get_table_ref, set_search_path
 
 load_dotenv(encoding="utf-8-sig")
@@ -22,7 +22,7 @@ UNIVERSITIES_TABLE = get_table_ref("UNIVERSITIES_TABLE")
 
 
 # (URL, depth) tuple list
-URL_LIST_PATH = os.path.join("ETL", "URLs.txt")
+URL_LIST_PATH = os.path.join("ControlPlane", "URLs.txt")
 #スキップする時間の設定（月単位）
 RECENT_SKIP_MONTHS_ENV = "ETL_RECENT_SKIP_MONTHS"
 
@@ -375,13 +375,7 @@ async def run_etl(*, persist_summary: bool = True):
         error_sink = _build_error_sink(log_dt)
 
         try:
-            site_states = await run_dispatcher(
-                targets,
-                record_sink=record_sink,
-                error_sink=error_sink,
-                error_buffer_limit=error_buffer_limit,
-                retain_extracted_records=retain_extracted_records,
-            )
+            site_states = await enqueue_initial_tasks(targets)
         except Exception as e:
             write_etl_error_log("ALL", "dispatcher", e, log_dt)
             raise

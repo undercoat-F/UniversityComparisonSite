@@ -4,13 +4,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from ETL.sqs_queue import TaskQueue
+from crawler.distributed.sqs_queue import TaskQueue
 
 
 class TestTaskQueueReceiveDelete(unittest.TestCase):
     def _make_queue(self, fake_client=None):
         fake_client = fake_client or MagicMock()
-        with patch("ETL.sqs_queue.boto3") as fake_boto3_module:
+        with patch("crawler.distributed.sqs_queue.boto3") as fake_boto3_module:
             fake_boto3_module.client.return_value = fake_client
             queue = TaskQueue(queue_url="https://sqs.example/fake-queue.fifo")
         return queue, fake_client
@@ -21,7 +21,7 @@ class TestTaskQueueReceiveDelete(unittest.TestCase):
             "Messages": [
                 {
                     "ReceiptHandle": "handle-1",
-                    "Body": '{"url": "https://example.edu/a", "depth": 1, "domain": "example.edu", "discovered_from": "https://example.edu/"}',
+                    "Body": '{"run_id": 123, "url": "https://example.edu/a", "depth": 1, "domain": "example.edu", "discovered_from": "https://example.edu/"}',
                 }
             ]
         }
@@ -31,6 +31,7 @@ class TestTaskQueueReceiveDelete(unittest.TestCase):
 
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["url"], "https://example.edu/a")
+        self.assertEqual(tasks[0]["run_id"], 123)
         self.assertEqual(tasks[0]["depth"], 1)
         self.assertEqual(tasks[0]["domain"], "example.edu")
         self.assertEqual(tasks[0]["receipt_handle"], "handle-1")

@@ -4,7 +4,7 @@
 import unittest
 
 from dataclass.dataclass import SiteState
-from ETL.worker_site_cache import DomainSiteCache
+from crawler.distributed.site_cache import DomainSiteCache
 
 
 def _make_site(domain: str) -> SiteState:

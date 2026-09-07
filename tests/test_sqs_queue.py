@@ -4,14 +4,14 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from ETL.sqs_queue import TaskQueue
+from crawler.distributed.sqs_queue import TaskQueue
 
 
 class TestTaskQueue(unittest.TestCase):
     def _make_queue(self, fake_client=None):
         fake_client = fake_client or MagicMock()
         fake_client.send_message.return_value = {"MessageId": "fake-id"}
-        with patch("ETL.sqs_queue.boto3") as fake_boto3_module:
+        with patch("crawler.distributed.sqs_queue.boto3") as fake_boto3_module:
             fake_boto3_module.client.return_value = fake_client
             queue = TaskQueue(queue_url="https://sqs.example/fake-queue.fifo")
         return queue, fake_client
@@ -19,7 +19,7 @@ class TestTaskQueue(unittest.TestCase):
     def test_send_task_sets_message_group_id_to_domain(self):
         queue, fake_client = self._make_queue()
 
-        message_id = queue.send_task(url="https://example.edu/a", depth=0, domain="example.edu")
+        message_id = queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu")
 
         self.assertEqual(message_id, "fake-id")
         _, kwargs = fake_client.send_message.call_args
@@ -29,7 +29,7 @@ class TestTaskQueue(unittest.TestCase):
     def test_send_task_clamps_delay_seconds_to_max(self):
         queue, fake_client = self._make_queue()
 
-        queue.send_task(url="https://example.edu/a", depth=0, domain="example.edu", delay_seconds=10_000)
+        queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu", delay_seconds=10_000)
 
         _, kwargs = fake_client.send_message.call_args
         self.assertEqual(kwargs["DelaySeconds"], 900)
@@ -37,7 +37,7 @@ class TestTaskQueue(unittest.TestCase):
     def test_send_task_rejects_negative_delay(self):
         queue, fake_client = self._make_queue()
 
-        queue.send_task(url="https://example.edu/a", depth=0, domain="example.edu", delay_seconds=-5)
+        queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu", delay_seconds=-5)
 
         _, kwargs = fake_client.send_message.call_args
         self.assertEqual(kwargs["DelaySeconds"], 0)
@@ -45,8 +45,8 @@ class TestTaskQueue(unittest.TestCase):
     def test_send_task_deduplication_id_varies_by_depth(self):
         queue, fake_client = self._make_queue()
 
-        queue.send_task(url="https://example.edu/a", depth=0, domain="example.edu")
-        queue.send_task(url="https://example.edu/a", depth=1, domain="example.edu")
+        queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu")
+        queue.send_task(run_id=123, url="https://example.edu/a", depth=1, domain="example.edu")
 
         first_call_kwargs = fake_client.send_message.call_args_list[0].kwargs
         second_call_kwargs = fake_client.send_message.call_args_list[1].kwargs

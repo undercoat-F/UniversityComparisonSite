@@ -21,20 +21,14 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
 
 
 class DomainSiteCache:
-    """workerプロセス内で SiteState をドメイン単位に使い回すLRUキャッシュ。
-
-    2種類のメモリ増加を防ぐ:
-    1. キャッシュするドメイン数に上限を設け、超えたら最も使われていないドメインを破棄する。
-    2. 同一ドメインを長時間使い回しても visited 等が無限に育たないよう、
-       一定件数処理するごとに release_runtime_memory() でリセットする。
-    """
+    """workerプロセス内でSiteStateをドメイン単位に使い回すLRUキャッシュ。"""
 
     def __init__(self, max_domains: int | None = None, release_every: int | None = None) -> None:
         self._max_domains = max_domains if max_domains is not None else _env_int(DOMAIN_CACHE_MAX_ENV, 500)
         self._release_every = (
             release_every if release_every is not None else _env_int(DOMAIN_CACHE_RELEASE_EVERY_ENV, 200)
         )
-        self._cache: "OrderedDict[str, SiteState]" = OrderedDict()
+        self._cache: OrderedDict[str, SiteState] = OrderedDict()
         self._task_counts: dict[str, int] = {}
 
     def __len__(self) -> int:
@@ -60,7 +54,5 @@ class DomainSiteCache:
         self._task_counts[domain] = count
         if count % self._release_every == 0:
             site = self._cache[domain]
-            # release_runtime_memory は1回限りの解放を想定したメソッドなので、
-            # workerでの定期リセット用にフラグを都度戻してから呼び直す。
             site.memory_released = False
             site.release_runtime_memory()

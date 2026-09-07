@@ -18,7 +18,7 @@ SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")
 SEED_OBSERVE_RESULTS_TABLE = get_table_ref("SEED_OBSERVE_RESULTS_TABLE")
 
 try:
-    from ETL import init_seed_db as init_seed_db
+    from ControlPlane import init_seed_db as init_seed_db
 except Exception:  # pragma: no cover
     init_seed_db = None
 
@@ -203,7 +203,7 @@ def _upsert_targets_with_connection(conn, targets: list[tuple[str, int]]) -> int
 
     db_module = init_seed_db
     if db_module is None:
-        from ETL import init_seed_db as db_module
+        from ControlPlane import init_seed_db as db_module
 
     with conn.cursor() as cursor:
         set_search_path(cursor, get_observer_schema(), get_public_schema())
@@ -308,7 +308,7 @@ def add_seed_targets(items: list[SeedTransformInput], *, ensure_schema: bool = F
 
     db_module = init_seed_db
     if db_module is None:
-        from ETL import init_seed_db as db_module
+        from ControlPlane import init_seed_db as db_module
 
     if ensure_schema:
         db_module.init_db()

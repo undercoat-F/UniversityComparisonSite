@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from dataclass.dataclass import CrawlAttempt
-from ETL.worker import _process_message
-from ETL.worker_site_cache import DomainSiteCache
+from crawler.distributed.site_cache import DomainSiteCache
+from crawler.distributed.worker import _process_message
 
 
 class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
@@ -15,6 +15,7 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         site_cache = DomainSiteCache()
         message = {
             "receipt_handle": "handle-1",
+            "run_id": 123,
             "url": "https://example.edu/a",
             "depth": 0,
             "domain": "example.edu",
@@ -25,14 +26,17 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
             site.enqueue(url="https://example.edu/b", depth=1, discovered_from=task.url)
             return CrawlAttempt(url=task.url, ok=True)
 
-        with patch("ETL.worker.ensure_robots", new=AsyncMock()), patch(
-            "ETL.worker.run_url_task", new=AsyncMock(side_effect=fake_run_url_task)
+        with patch("crawler.distributed.worker.ensure_robots", new=AsyncMock()), patch(
+            "crawler.distributed.worker.run_url_task", new=AsyncMock(side_effect=fake_run_url_task)
         ):
             await _process_message(
                 message,
                 task_queue=task_queue,
                 site_cache=site_cache,
                 dedup_store=None,
+                queue_logger=None,
+                worker_id="test-worker",
+                active_run_ids=set(),
                 session=MagicMock(),
                 max_depth=5,
             )
@@ -48,20 +52,24 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         site_cache = DomainSiteCache()
         message = {
             "receipt_handle": "handle-1",
+            "run_id": 123,
             "url": "https://example.edu/a",
             "depth": 0,
             "domain": "example.edu",
             "discovered_from": "",
         }
 
-        with patch("ETL.worker.ensure_robots", new=AsyncMock()), patch(
-            "ETL.worker.run_url_task", new=AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("crawler.distributed.worker.ensure_robots", new=AsyncMock()), patch(
+            "crawler.distributed.worker.run_url_task", new=AsyncMock(side_effect=RuntimeError("boom"))
         ):
             await _process_message(
                 message,
                 task_queue=task_queue,
                 site_cache=site_cache,
                 dedup_store=None,
+                queue_logger=None,
+                worker_id="test-worker",
+                active_run_ids=set(),
                 session=MagicMock(),
                 max_depth=5,
             )
@@ -74,21 +82,24 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         site_cache = DomainSiteCache()
         message = {
             "receipt_handle": "handle-1",
+            "run_id": 123,
             "url": "https://example.edu/a",
             "depth": 0,
             "domain": "example.edu",
             "discovered_from": "",
         }
 
-        with patch("ETL.worker.ensure_robots", new=AsyncMock()) as fake_ensure_robots, patch(
-            "ETL.worker.run_url_task", new=AsyncMock(return_value=CrawlAttempt(url="x", ok=True))
+        with patch("crawler.distributed.worker.ensure_robots", new=AsyncMock()) as fake_ensure_robots, patch(
+            "crawler.distributed.worker.run_url_task", new=AsyncMock(return_value=CrawlAttempt(url="x", ok=True))
         ):
             await _process_message(
                 message, task_queue=task_queue, site_cache=site_cache, dedup_store=None,
+                queue_logger=None, worker_id="test-worker", active_run_ids=set(),
                 session=MagicMock(), max_depth=5,
             )
             await _process_message(
                 message, task_queue=task_queue, site_cache=site_cache, dedup_store=None,
+                queue_logger=None, worker_id="test-worker", active_run_ids=set(),
                 session=MagicMock(), max_depth=5,
             )
 

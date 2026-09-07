@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from ETL.dedup_store import DedupStore
+from crawler.distributed.dedup_store import DedupStore
 
 
 class _FakeRedisClient:
@@ -33,7 +33,7 @@ class _FakeRedisClient:
 
 class TestDedupStore(unittest.TestCase):
     def _make_store(self) -> DedupStore:
-        with patch("ETL.dedup_store.redis") as fake_redis_module:
+        with patch("crawler.distributed.dedup_store.redis") as fake_redis_module:
             fake_redis_module.from_url.return_value = _FakeRedisClient()
             return DedupStore(redis_url="redis://localhost:6379/0", ttl_seconds=60)
 

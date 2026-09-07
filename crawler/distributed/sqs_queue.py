@@ -11,16 +11,6 @@ except ImportError:  # pragma: no cover - boto3 is optional until wired in
 DEFAULT_MAX_DELAY_SECONDS = 900  # SQSのDelaySecondsは最大900秒(15分)
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
 class TaskQueue:
     """SQS FIFOキューへのURLタスク投入(Producer)・受信(Consumer)を担う。"""
 
@@ -36,21 +26,17 @@ class TaskQueue:
     def send_task(
         self,
         *,
+        run_id: int,
         url: str,
         depth: int,
         domain: str,
         discovered_from: str = "",
         delay_seconds: int = 0,
     ) -> str:
-        """URLタスクを送信する。戻り値はSQSのMessageId。
-
-        domain を MessageGroupId に使うことで、同一ドメインのタスクはSQS側で
-        常に1件ずつ順番に処理される(crawl-delay違反の防止)。
-        delay_seconds はドメインのcrawl-delayをそのまま渡すことで、
-        次のタスクが早く見えすぎないように遅延させる。
-        """
+        """URLタスクを送信する。戻り値はSQSのMessageId。"""
         body = json.dumps(
             {
+                "run_id": run_id,
                 "url": url,
                 "depth": depth,
                 "domain": domain,
@@ -67,12 +53,7 @@ class TaskQueue:
         return response["MessageId"]
 
     def receive_tasks(self, max_messages: int = 10, wait_time_seconds: int = 20) -> list[dict]:
-        """URLタスクを受信する(ロングポーリング)。
-
-        戻り値は [{"receipt_handle": str, "url": str, "depth": int, "domain": str,
-        "discovered_from": str}, ...] のリスト。JSONとしてパースできないメッセージは
-        壊れたメッセージとみなし、その場で削除して読み飛ばす(キューに残り続けないように)。
-        """
+        """URLタスクを受信する(ロングポーリング)。"""
         response = self._client.receive_message(
             QueueUrl=self.queue_url,
             MaxNumberOfMessages=max(1, min(10, int(max_messages))),
@@ -86,6 +67,7 @@ class TaskQueue:
                 tasks.append(
                     {
                         "receipt_handle": receipt_handle,
+                        "run_id": body["run_id"],
                         "url": body["url"],
                         "depth": body["depth"],
                         "domain": body["domain"],
@@ -97,8 +79,25 @@ class TaskQueue:
         return tasks
 
     def delete_task(self, receipt_handle: str) -> None:
-        """処理済みタスクをキューから削除する。呼ばなければvisibility timeout後に再配信される。"""
+        """処理済みタスクをキューから削除する。"""
         self._client.delete_message(QueueUrl=self.queue_url, ReceiptHandle=receipt_handle)
+
+    def get_message_counts(self) -> dict[str, int]:
+        """可視・処理中・遅延中の概算メッセージ数を取得する。"""
+        response = self._client.get_queue_attributes(
+            QueueUrl=self.queue_url,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+                "ApproximateNumberOfMessagesDelayed",
+            ],
+        )
+        attributes = response.get("Attributes", {})
+        return {
+            "visible": int(attributes.get("ApproximateNumberOfMessages", 0)),
+            "in_flight": int(attributes.get("ApproximateNumberOfMessagesNotVisible", 0)),
+            "delayed": int(attributes.get("ApproximateNumberOfMessagesDelayed", 0)),
+        }
 
 
 _default_queue: TaskQueue | None = None

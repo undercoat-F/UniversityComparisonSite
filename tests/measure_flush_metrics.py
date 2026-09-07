@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ETL.queue_log import QueueLogStore
+from ControlPlane.queue_log import QueueLogStore
 
 
 def run_measurement(
@@ -22,7 +22,7 @@ def run_measurement(
     pg_dsn: str,
 ) -> None:
     root = ROOT
-    schema_path = root / "ETL" / "queue_log_schema_pg.sql"
+    schema_path = root / "ControlPlane" / "queue_log_schema_pg.sql"
 
     store = QueueLogStore(
         db_path="",

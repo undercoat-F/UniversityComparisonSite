@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv(encoding="utf-8-sig")
+
 try:
     import redis
 except ImportError:  # pragma: no cover - redis is optional until wired in

@@ -14,7 +14,7 @@ for table_env_name in (
 ):
     os.environ.setdefault(table_env_name, table_env_name.lower())
 
-from ETL.queue_log import QueueLogStore
+from ControlPlane.queue_log import QueueLogStore
 
 
 class FakeCursor:

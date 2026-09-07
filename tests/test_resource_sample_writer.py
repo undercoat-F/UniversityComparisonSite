@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("CRAWL_RESOURCE_SAMPLES_TABLE", "etl.crawl_resource_samples")
 
-from ETL.resource_recorder import _ResourceSampleWriter
+from ControlPlane.resource_recorder import _ResourceSampleWriter
 
 
 class FakeCursor:
@@ -49,7 +49,7 @@ class FakeConnection:
 class TestResourceSampleWriter(unittest.TestCase):
     def setUp(self):
         self.fake_connection = FakeConnection()
-        patcher = patch("ETL.resource_recorder.psycopg2")
+        patcher = patch("ControlPlane.resource_recorder.psycopg2")
         fake_psycopg2 = patcher.start()
         fake_psycopg2.connect.return_value = self.fake_connection
         self.addCleanup(patcher.stop)
@@ -63,8 +63,8 @@ class TestResourceSampleWriter(unittest.TestCase):
     def test_add_does_not_flush_before_batch_size(self):
         writer, fake_connection = self._make_writer(batch_size=3)
 
-        writer.add(("run1", "hostA", 1.0, 10.0, 100.0, 5.0, 40.0))
-        writer.add(("run1", "hostA", 2.0, 12.0, 101.0, 6.0, 41.0))
+        writer.add((123, "run1", "hostA", 1.0, 10.0, 100.0, 5.0, 40.0))
+        writer.add((123, "run1", "hostA", 2.0, 12.0, 101.0, 6.0, 41.0))
 
         self.assertEqual(len(writer._buffer), 2)
         self.assertFalse(fake_connection.committed)
@@ -72,8 +72,8 @@ class TestResourceSampleWriter(unittest.TestCase):
     def test_add_flushes_once_batch_size_reached(self):
         writer, fake_connection = self._make_writer(batch_size=2)
 
-        writer.add(("run1", "hostA", 1.0, 10.0, 100.0, 5.0, 40.0))
-        writer.add(("run1", "hostA", 2.0, 12.0, 101.0, 6.0, 41.0))
+        writer.add((123, "run1", "hostA", 1.0, 10.0, 100.0, 5.0, 40.0))
+        writer.add((123, "run1", "hostA", 2.0, 12.0, 101.0, 6.0, 41.0))
 
         self.assertEqual(writer._buffer, [])
         self.assertTrue(fake_connection.committed)
@@ -81,7 +81,7 @@ class TestResourceSampleWriter(unittest.TestCase):
     def test_close_flushes_remaining_buffer(self):
         writer, fake_connection = self._make_writer(batch_size=10)
 
-        writer.add(("run1", "hostA", 1.0, 10.0, 100.0, 5.0, 40.0))
+        writer.add((123, "run1", "hostA", 1.0, 10.0, 100.0, 5.0, 40.0))
         writer.close()
 
         self.assertEqual(writer._buffer, [])

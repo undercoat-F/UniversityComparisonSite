@@ -9,7 +9,7 @@ from urllib.robotparser import RobotFileParser
 from enum import Enum, auto
 
 if TYPE_CHECKING:
-    from ETL.dedup_store import DedupStore
+    from crawler.distributed.dedup_store import DedupStore
 
 
 @dataclass
