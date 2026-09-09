@@ -9,11 +9,11 @@ WORKDIR /app
 COPY requirements-ci.txt ./
 RUN pip install --no-cache-dir -r requirements-ci.txt
 
-COPY ETL ./ETL
+COPY ControlPlane ./ControlPlane
 COPY crawler ./crawler
 COPY db ./db
 COPY dataclass ./dataclass
 
 RUN mkdir -p /app/log
 
-CMD ["python", "-m", "ETL.ETL"]
+CMD ["python", "-m", "crawler.distributed.worker"]
