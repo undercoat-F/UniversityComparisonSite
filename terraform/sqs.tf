@@ -12,7 +12,7 @@ resource "aws_sqs_queue" "crawl_tasks" {
   name                        = "crawl-tasks.fifo"
   fifo_queue                  = true
   content_based_deduplication = false # 重複排除はRedis(DedupStore)側で行うため無効化
-  visibility_timeout_seconds  = 120   # ETL_WORKER_TIMEOUT_SEC と揃える
+  visibility_timeout_seconds  = 180   # ETL_WORKER_TIMEOUT_SEC と揃える
   message_retention_seconds   = 345600 # 4日
 
   redrive_policy = jsonencode({

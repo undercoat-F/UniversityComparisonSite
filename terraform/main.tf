@@ -11,7 +11,9 @@ provider "aws" {
   region = "ap-northeast-1"
 }
 
-resource "aws_instance" "crawler" {
+resource "aws_instance" "controlplane" {
+  count = var.controlplane_count
+
   ami           = var.ami_id
   instance_type = "t3.micro"
   vpc_security_group_ids = [
@@ -21,8 +23,44 @@ resource "aws_instance" "crawler" {
 
   subnet_id = var.subnet_id
   tags = {
-    "Name" = "UniversityComparison"
+    "Name" = "UniversityComparison-controlplane-${count.index + 1}"
+    "Role" = "controlplane"
   }
+}
+
+resource "aws_instance" "worker" {
+  count = var.worker_count
+
+  ami           = var.ami_id
+  instance_type = "t3.micro"
+  vpc_security_group_ids = [
+    aws_security_group.crawler.id
+  ]
+  iam_instance_profile = aws_iam_instance_profile.crawl_queue.name
+
+  subnet_id = var.subnet_id
+  tags = {
+    "Name"      = "UniversityComparison-worker-${count.index + 1}"
+    "Role"      = "worker"
+    "WorkerId"  = "worker-${count.index + 1}"
+  }
+}
+
+moved {
+  from = aws_instance.crawler
+  to   = aws_instance.controlplane[0]
+}
+
+output "controlplane_instance_ids" {
+  value = aws_instance.controlplane[*].id
+}
+
+output "worker_instance_ids" {
+  value = aws_instance.worker[*].id
+}
+
+output "worker_private_ips" {
+  value = aws_instance.worker[*].private_ip
 }
 
 resource "aws_security_group" "crawler" {
