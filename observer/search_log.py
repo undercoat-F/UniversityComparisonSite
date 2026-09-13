@@ -44,7 +44,7 @@ class SearchLogStore:
         if not pg_dsn:
             return None
 
-        schema_path = os.getenv("SEARCH_LOG_SCHEMA_PATH", os.path.join("ETL", "search_log_schema.sql"))
+        schema_path = os.getenv("SEARCH_LOG_SCHEMA_PATH", os.path.join("ControlPlane", "search_log_schema.sql"))
         return cls(pg_dsn=pg_dsn, schema_path=schema_path)
 
     def _connect(self):

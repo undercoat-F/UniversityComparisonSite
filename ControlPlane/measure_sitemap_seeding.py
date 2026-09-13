@@ -17,8 +17,8 @@ if str(ROOT) not in sys.path:
 from dotenv import load_dotenv
 
 from crawler.crawlworker import seed_sitemap_candidates
-from ETL.dispatcher import build_site_states
-from ETL.schedular import load_targets
+from ControlPlane.dispatcher import build_site_states
+from ControlPlane.schedular import load_targets
 
 
 @dataclass

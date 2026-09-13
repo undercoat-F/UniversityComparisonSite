@@ -30,12 +30,14 @@ class QueueLogStore:
         pg_dsn: str = "",
         batch_size: int = 100,
         failures_only: bool = True,
+        worker_id: str = "",
     ) -> None:
         self.db_path = db_path
         self.schema_path = schema_path
         self.pg_dsn = pg_dsn # PostgreSQL Data Source Name (DSN) for connecting to the database　thank you
         self.batch_size = max(1, int(batch_size))
         self.failures_only = bool(failures_only)
+        self.worker_id = worker_id
         self._buffer: list[tuple[str, dict[str, Any]]] = []
         self._conn: Any = None
         self.dberror : Optional[Exception] = None
@@ -161,6 +163,84 @@ class QueueLogStore:
             finally:
                 self._close_cursor(cur)
 
+    def start_worker_run(self, run_id: int, worker_id: str) -> None:
+        table_ref = get_table_ref("CRAWL_WORKER_RUNS_TABLE")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {table_ref} (run_id, worker_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT (run_id, worker_id) DO UPDATE
+                    SET last_heartbeat_at = NOW(), finished_at = NULL, status = 'running'
+                    """,
+                    (run_id, worker_id),
+                )
+            conn.commit()
+        except Exception:
+            self._rollback_if_open(conn)
+            raise
+
+    def update_worker_run(
+        self,
+        run_id: int,
+        worker_id: str,
+        *,
+        messages_received: int = 0,
+        urls_completed: int = 0,
+        urls_failed: int = 0,
+        records_extracted: int = 0,
+        status: str = "running",
+    ) -> None:
+        table_ref = get_table_ref("CRAWL_WORKER_RUNS_TABLE")
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE {table_ref}
+                    SET last_heartbeat_at = NOW(),
+                        finished_at = CASE WHEN %s = 'running' THEN NULL ELSE NOW() END,
+                        status = %s,
+                        messages_received = messages_received + %s,
+                        urls_completed = urls_completed + %s,
+                        urls_failed = urls_failed + %s,
+                        records_extracted = records_extracted + %s
+                    WHERE run_id = %s AND worker_id = %s
+                    """,
+                    (
+                        status,
+                        status,
+                        messages_received,
+                        urls_completed,
+                        urls_failed,
+                        records_extracted,
+                        run_id,
+                        worker_id,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            self._rollback_if_open(conn)
+            raise
+
+    def count_unfinished_tasks(self, run_id: int) -> int:
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {CRAWL_QUEUE_STATE_TABLE}
+                    WHERE run_id = %s AND status IN ('pending', 'processing')
+                    """,
+                    (run_id,),
+                )
+                return int(cur.fetchone()[0])
+        except Exception:
+            self._rollback_if_open(conn)
+            raise
+
     def _enqueue(self, kind: str, payload: dict[str, Any]) -> None:
         self._buffer.append((kind, payload))
         if len(self._buffer) >= self.batch_size:
@@ -204,6 +284,7 @@ class QueueLogStore:
                 "last_error_message": last_error_message,
                 "set_started": set_started,
                 "set_finished": set_finished,
+                "worker_id": self.worker_id,
             },
         )
 
@@ -239,6 +320,7 @@ class QueueLogStore:
                 "response_bytes": response_bytes,
                 "used_fallback": used_fallback,
                 "connection_log": connection_log,
+                "worker_id": self.worker_id,
             },
         )
 
@@ -332,13 +414,13 @@ class QueueLogStore:
                 run_id, url, parent_url, domain, depth, status,
                 fetch_method, retry_count, discovered_from,
                 status_code, last_error_type, last_error_message,
-                started_at, finished_at, updated_at
+                worker_id, started_at, finished_at, updated_at
             )
             VALUES (
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s,
-                CASE WHEN %s THEN NOW() ELSE NULL END,
+                %s, CASE WHEN %s THEN NOW() ELSE NULL END,
                 CASE WHEN %s THEN NOW() ELSE NULL END,
                 NOW()
             )
@@ -353,6 +435,7 @@ class QueueLogStore:
                 status_code = EXCLUDED.status_code,
                 last_error_type = EXCLUDED.last_error_type,
                 last_error_message = EXCLUDED.last_error_message,
+                worker_id = COALESCE(NULLIF(EXCLUDED.worker_id, ''), {CRAWL_QUEUE_STATE_TABLE}.worker_id),
                 started_at = COALESCE(EXCLUDED.started_at, {CRAWL_QUEUE_STATE_TABLE}.started_at),
                 finished_at = COALESCE(EXCLUDED.finished_at, {CRAWL_QUEUE_STATE_TABLE}.finished_at),
                 updated_at = NOW()
@@ -370,6 +453,7 @@ class QueueLogStore:
                 p["status_code"],
                 p["last_error_type"],
                 p["last_error_message"],
+                p["worker_id"],
                 bool(p["set_started"]),
                 bool(p["set_finished"]),
             ),
@@ -420,9 +504,9 @@ class QueueLogStore:
             INSERT INTO {CRAWL_ATTEMPTS_TABLE} (
                 queue_state_id, attempt_no, fetch_method, ok, status_code,
                 error_type, error_message, final_url, response_bytes,
-                used_fallback, connection_log
+                used_fallback, connection_log, worker_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 queue_state_id,
@@ -436,6 +520,7 @@ class QueueLogStore:
                 p["response_bytes"],
                 int(bool(p["used_fallback"])),
                 json.dumps(p["connection_log"], ensure_ascii=False),
+                p["worker_id"],
             ),
         )
         return

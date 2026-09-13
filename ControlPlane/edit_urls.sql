@@ -90,3 +90,16 @@ LEFT JOIN ${PROGRAM_TUITION_MAP_TABLE} ptm
   ON ptm.degree_program_id = dp.id
 GROUP BY u.id, u.name
 ORDER BY total_courses DESC, u.name;
+
+-----
+-- 特定runで、worker別の処理結果を集計
+SELECT worker_id, status, COUNT(*)
+FROM etl.crawl_queue_state
+WHERE run_id = 123
+GROUP BY worker_id, status;
+
+-- worker別のCPU/RSS時系列を見る
+SELECT sampled_at, process_cpu_percent, process_rss_mb
+FROM etl.crawl_resource_samples
+WHERE run_id = 123 AND worker_id = 'worker-identifier'
+ORDER BY sampled_at;

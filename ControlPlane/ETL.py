@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ETL.schedular import run_etl
+from ControlPlane.schedular import run_etl
 from db import db_saver
 from db.json_to_rows import transform_records_to_rows
 

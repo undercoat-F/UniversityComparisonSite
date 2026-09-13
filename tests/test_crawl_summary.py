@@ -1,6 +1,6 @@
 import unittest
 
-from ETL.schedular import build_crawl_summary
+from ControlPlane.schedular import build_crawl_summary
 from dataclass.dataclass import SiteState
 
 

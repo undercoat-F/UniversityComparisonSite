@@ -14,7 +14,7 @@ for table_env_name in (
 ):
     os.environ.setdefault(table_env_name, table_env_name.lower())
 
-from ETL.dispatcher import MemoryPressureController
+from ControlPlane.dispatcher import MemoryPressureController
 
 
 class MemoryPressureControllerTests(unittest.TestCase):

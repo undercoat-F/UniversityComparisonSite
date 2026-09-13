@@ -113,7 +113,7 @@ class TestObserverPipeline(unittest.TestCase):
             source_stage="seed_searcher",
         )
         dummy_conn = _DummyConn()
-        store = ObserveLogStore(pg_dsn="postgresql://example", schema_path="ETL/seed_observe_log_schema.sql")
+        store = ObserveLogStore(pg_dsn="postgresql://example", schema_path="ControlPlane/seed_observe_log_schema.sql")
 
         with patch.object(store, "_connect", return_value=dummy_conn):
             store.insert_result(

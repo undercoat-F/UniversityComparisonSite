@@ -1,4 +1,7 @@
 ami_id                    = "ami-xxxxxxxxxxxxxxxxx"
+ec2_key_name              = "example-key-pair"
+controlplane_count        = 1
+worker_count              = 2
 subnet_id                 = "subnet-xxxxxxxxxxxxxxxxx"
 vpc_id                    = "vpc-xxxxxxxxxxxxxxxxx"
 security_group_name       = "example-security-group"

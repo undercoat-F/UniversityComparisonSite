@@ -41,6 +41,32 @@ services:
       - ./log:/app/log
     restart: "no"
 
+  controlplane:
+    build:
+      context: .
+      dockerfile: Dockerfile.controlplane
+    image: university-comparison-controlplane:local
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    profiles:
+      - distributed
+    volumes:
+      - ./log:/app/log
+    restart: "no"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: university-comparison-worker:local
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    profiles:
+      - distributed
+    volumes:
+      - ./log:/app/log
+    restart: unless-stopped
+
   observe:
     build:
       context: .
@@ -54,6 +80,15 @@ services:
       - ./log:/app/log
     restart: "no"
 
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "127.0.0.1:6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   restart: unless-stopped
+
 volumes:
   caddy_data:
   caddy_config:
+  redis_data:
