@@ -2,6 +2,11 @@ variable "ami_id" {
   type = string
 }
 
+variable "ec2_key_name" {
+  type        = string
+  description = "Name of the existing EC2 key pair attached to controlplane and worker instances."
+}
+
 variable "controlplane_count" {
   type        = number
   description = "Number of producer/control-plane instances. Keep this at 1 to avoid duplicate task production."

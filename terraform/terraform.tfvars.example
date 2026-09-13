@@ -1,4 +1,5 @@
 ami_id                    = "ami-xxxxxxxxxxxxxxxxx"
+ec2_key_name              = "example-key-pair"
 controlplane_count        = 1
 worker_count              = 2
 subnet_id                 = "subnet-xxxxxxxxxxxxxxxxx"

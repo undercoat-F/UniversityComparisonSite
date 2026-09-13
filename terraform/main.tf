@@ -16,6 +16,7 @@ resource "aws_instance" "controlplane" {
 
   ami           = var.ami_id
   instance_type = "t3.micro"
+  key_name      = var.ec2_key_name
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
@@ -33,6 +34,7 @@ resource "aws_instance" "worker" {
 
   ami           = var.ami_id
   instance_type = "t3.micro"
+  key_name      = var.ec2_key_name
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
