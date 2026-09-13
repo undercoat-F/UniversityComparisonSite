@@ -11,12 +11,26 @@ provider "aws" {
   region = "ap-northeast-1"
 }
 
+locals {
+  docker_bootstrap = <<-EOF
+    #!/bin/bash
+    set -e
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y docker.io docker-compose-v2
+    systemctl enable --now docker
+    usermod -aG docker ubuntu
+  EOF
+}
+
 resource "aws_instance" "controlplane" {
   count = var.controlplane_count
 
   ami           = var.ami_id
   instance_type = "t3.micro"
   key_name      = var.ec2_key_name
+  user_data     = local.docker_bootstrap
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
@@ -35,6 +49,7 @@ resource "aws_instance" "worker" {
   ami           = var.ami_id
   instance_type = "t3.micro"
   key_name      = var.ec2_key_name
+  user_data     = local.docker_bootstrap
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
