@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-import uuid
 from datetime import datetime
 
 import httpx
@@ -41,10 +40,11 @@ def _get_dedup_store_or_none():
 
 
 def _worker_id() -> str:
+    # EC2(コンテナ)ごとに集計できるよう、再起動しても変わらないhostnameのみを付与する。
     configured = os.getenv("WORKER_ID", "").strip()
     if configured:
-        return configured
-    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        return f"{configured}:{socket.gethostname()}"
+    return socket.gethostname()
 
 
 def _queue_log_store_or_none(worker_id: str):
