@@ -103,3 +103,23 @@ SELECT sampled_at, process_cpu_percent, process_rss_mb
 FROM etl.crawl_resource_samples
 WHERE run_id = 123 AND worker_id = 'worker-identifier'
 ORDER BY sampled_at;
+
+-----table sizes
+SELECT
+    schemaname,
+    relname AS table_name,
+
+    pg_size_pretty(
+        pg_relation_size(relid)
+    ) AS table_size,
+
+    pg_size_pretty(
+        pg_indexes_size(relid)
+    ) AS index_size,
+
+    pg_size_pretty(
+        pg_total_relation_size(relid)
+    ) AS total_size
+
+FROM pg_catalog.pg_statio_user_tables
+ORDER BY pg_total_relation_size(relid) DESC;

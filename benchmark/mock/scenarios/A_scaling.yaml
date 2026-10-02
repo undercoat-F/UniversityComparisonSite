@@ -1,0 +1,62 @@
+# 試験A：スケーリング試験（性能計測用）
+# 内容確認: python -m benchmark.mock.inspect_scenario benchmark/mock/scenarios/A_scaling.yaml
+scenario: A-scaling
+seed: 42                      # ページ構成・応答種別の割り当てに使う乱数seed
+scheme: https                 # クローラーは robots.txt / sitemap を https 固定で取得する
+domain_suffix: bench.internal
+
+# ドメイン数の指定：total_domains + mix（比率） / counts（件数） / domains（個別列挙）のいずれか1つ
+total_domains: 10000
+mix:                          # 比率の合計は1.0。端数は最大剰余法で配分する
+  normal: 0.90
+  slow: 0.04
+  failure: 0.04
+  robots_error: 0.01
+  sitemap_error: 0.01
+# counts:                     # 件数で直接指定する場合（mix の代わりに使う）
+#   normal: 90
+#   slow: 4
+#   failure: 4
+#   robots_error: 1
+#   sitemap_error: 1
+
+# ドメイン種別ごとの設定。省略した項目は scenario.py の DEFAULT_PROFILE の値になる
+profiles:
+  normal:
+    crawl_delay: 1            # 整数秒（R1.5）
+    pages: 50                 # ルート "/" を除くページ数
+    links_per_page: 5         # ページツリーの分岐数（ツリーの深さ = ceil(log_5(50)) 程度）
+    extra_links: 2            # ツリー外のランダムな同一ドメイン内リンク数
+    sitemap_ratio: 0.8        # 残りのページはリンクをたどって発見される
+    paragraphs: 4             # 本文の段落数（ページサイズの調整用）
+    responses: {fast: 1.0}    # ページごとの応答種別の比率
+  slow:
+    inherit: normal
+    responses: {fast: 0.5, slow: 0.4, very_slow: 0.1}
+  failure:
+    inherit: normal
+    responses: {fast: 0.8, error_500: 0.1, timeout: 0.1}
+  robots_error:
+    inherit: normal
+    # 404: クローラーは robots.txt なし（全許可・Crawl-delay なし）として扱う
+    # 500 にすると urllib の RobotFileParser は全URLを不許可と判定する点に注意
+    robots: error_404
+  sitemap_error:
+    inherit: normal
+    sitemap: error_404        # sitemap からの投入なし。ルートからのリンクのみで発見される
+
+# 応答種別の定義。status: none は応答を返さず、クライアントが切断するまで（最大 delay_ms）保持する
+response_types:
+  ok:        {status: 200, delay_ms: 0}
+  fast:      {status: 200, delay_ms: 10}
+  slow:      {status: 200, delay_ms: 500}
+  very_slow: {status: 200, delay_ms: 2000}
+  error_404: {status: 404, delay_ms: 0}
+  error_500: {status: 500, delay_ms: 0}
+  timeout:   {status: none, delay_ms: 60000}
+
+# inspect_scenario.py の警告判定に使う値
+checks:
+  crawler_max_depth: 5            # ETL_WORKER_MAX_DEPTH
+  client_timeout_sec: 30          # ETL_REQUESTS_TIMEOUT_SEC
+  min_theoretical_throughput: 50  # 理論上限がこれを下回ると警告（URLs/sec）

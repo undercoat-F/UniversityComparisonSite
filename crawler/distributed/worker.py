@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import socket
 from datetime import datetime
 
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 
 from crawler.crawlworker import DEFAULT_HEADERS, ensure_robots, run_url_task
 from crawler.distributed.dedup_store import get_dedup_store
+from crawler.distributed.record_writer import DbRecordLoader, RecordBatchWriter, record_db_enabled
 from crawler.distributed.site_cache import DomainSiteCache
 from crawler.distributed.sqs_queue import TaskQueue, get_task_queue
 from dataclass.dataclass import SiteState, URLTask
@@ -94,6 +96,7 @@ async def _process_message(
     active_run_ids: set[int],
     session: httpx.AsyncClient,
     max_depth: int,
+    record_sink=None,
 ) -> None:
     domain = message["domain"]
     url = message["url"]
@@ -108,6 +111,8 @@ async def _process_message(
             max_depth=max_depth,
             dedup_store=dedup_store,
             queue_logger=queue_logger,
+            record_sink=record_sink,
+            retain_extracted_records=False,
         )
 
     site = site_cache.get_or_create(domain, _make_site)
@@ -151,12 +156,32 @@ async def _process_message(
     print(f"[WORKER] completed domain={domain} url={url}", flush=True)
 
 
+def _record_writer_or_none() -> RecordBatchWriter | None:
+    if not record_db_enabled():
+        print("[WORKER] record DB writing disabled: RECORD_DB_ENABLED is off", flush=True)
+        return None
+    try:
+        loader = DbRecordLoader()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WORKER][WARN] record DB writing disabled: {type(exc).__name__}: {exc}", flush=True)
+        return None
+    return RecordBatchWriter(
+        loader,
+        batch_size=_env_int("RECORD_DB_BATCH_SIZE", 200),
+        flush_interval_sec=_env_int("RECORD_DB_FLUSH_INTERVAL_SEC", 30),
+        max_pending=_env_int("RECORD_DB_MAX_PENDING", 1000),
+    )
+
+
 async def run_worker(*, max_concurrency: int = 4) -> None:
     """SQSからURLタスクを受信し、クロールして新規リンクを再投入するConsumerループ。"""
     task_queue = get_task_queue()
     dedup_store = _get_dedup_store_or_none()
     worker_id = _worker_id()
     queue_logger = _queue_log_store_or_none(worker_id)
+    record_writer = _record_writer_or_none()
+    if record_writer is not None:
+        await record_writer.start()
     site_cache = DomainSiteCache()
     active_run_ids: set[int] = set()
     max_depth = _env_int("ETL_WORKER_MAX_DEPTH", 5)
@@ -199,6 +224,7 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
                             active_run_ids=active_run_ids,
                             session=session,
                             max_depth=max_depth,
+                            record_sink=record_writer.add if record_writer is not None else None,
                         )
                         for message in messages
                     )
@@ -208,6 +234,8 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
         raise
     finally:
         stop_resource_monitor(monitor_state)
+        if record_writer is not None:
+            await record_writer.close()
         if queue_logger is not None:
             for run_id in active_run_ids:
                 try:
@@ -220,5 +248,18 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
             queue_logger.close()
 
 
+async def _main() -> None:
+    # docker stop の SIGTERM でもタスクをキャンセルし、run_worker の終了処理（未書き込みレコードの書き込み）を実行させる
+    task = asyncio.current_task()
+    try:
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+    except (NotImplementedError, AttributeError):  # Windows
+        pass
+    try:
+        await run_worker()
+    except asyncio.CancelledError:
+        print("[WORKER] stopped by SIGTERM", flush=True)
+
+
 if __name__ == "__main__":
-    asyncio.run(run_worker())
+    asyncio.run(_main())

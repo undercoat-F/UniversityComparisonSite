@@ -106,6 +106,38 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(site_cache), 1)
         self.assertEqual(fake_ensure_robots.await_count, 2)
 
+    async def test_extracted_records_go_to_record_sink_instead_of_memory(self):
+        task_queue = MagicMock()
+        site_cache = DomainSiteCache()
+        record_sink = AsyncMock()
+        message = {
+            "receipt_handle": "handle-1",
+            "run_id": 123,
+            "url": "https://example.edu/a",
+            "depth": 0,
+            "domain": "example.edu",
+            "discovered_from": "",
+        }
+        captured = {}
+
+        async def fake_run_url_task(site, task, session):
+            captured["site"] = site
+            await site.add_extracted_record({"url": task.url, "degrees": [{"name": "BSc"}]})
+            return CrawlAttempt(url=task.url, ok=True)
+
+        with patch("crawler.distributed.worker.ensure_robots", new=AsyncMock()), patch(
+            "crawler.distributed.worker.run_url_task", new=AsyncMock(side_effect=fake_run_url_task)
+        ):
+            await _process_message(
+                message, task_queue=task_queue, site_cache=site_cache, dedup_store=None,
+                queue_logger=None, worker_id="test-worker", active_run_ids=set(),
+                session=MagicMock(), max_depth=5, record_sink=record_sink,
+            )
+
+        record_sink.assert_awaited_once()
+        self.assertEqual(record_sink.await_args.args[0], "example.edu")
+        self.assertEqual(captured["site"].extracted_records, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,5 @@
+# benchmark 用の追加依存（Mock Server / 内容確認ツール）
+pyyaml>=6.0
+uvicorn>=0.30
+cryptography>=42
+certifi

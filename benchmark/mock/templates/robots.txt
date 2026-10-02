@@ -1,0 +1,3 @@
+User-agent: *
+${crawl_delay}${disallow}
+Sitemap: $sitemap_url
