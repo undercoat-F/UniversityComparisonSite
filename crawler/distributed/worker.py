@@ -4,6 +4,8 @@ import asyncio
 import os
 import signal
 import socket
+import time
+from collections import defaultdict
 from datetime import datetime
 
 import httpx
@@ -11,6 +13,7 @@ from dotenv import load_dotenv
 
 from crawler.crawlworker import DEFAULT_HEADERS, ensure_robots, run_url_task
 from crawler.distributed.dedup_store import get_dedup_store
+from crawler.distributed.domain_rate_limiter import get_domain_rate_limiter
 from crawler.distributed.record_writer import DbRecordLoader, RecordBatchWriter, record_db_enabled
 from crawler.distributed.site_cache import DomainSiteCache
 from crawler.distributed.sqs_queue import TaskQueue, get_task_queue
@@ -81,8 +84,24 @@ async def _forward_discovered_tasks(site: SiteState, task_queue: TaskQueue) -> N
             depth=next_task.depth,
             domain=site.domain,
             discovered_from=next_task.discovered_from,
-            delay_seconds=int(site.crawl_delay),
         )
+
+
+def _extend_visibility_if_needed(task_queue: TaskQueue, message: dict, wait_sec: float) -> None:
+    """待機と処理が終わる前に可視性タイムアウトが切れそうなら延長する。
+
+    切れると他の Worker に再配信され、同じURLが二重に処理される。
+    """
+    deadline = message.get("visible_deadline")
+    if deadline is None:
+        return
+    allowance = _env_int("ETL_WORKER_TIMEOUT_SEC", 120)
+    now = time.monotonic()
+    if now + wait_sec + allowance <= deadline:
+        return
+    timeout = int(wait_sec + allowance) + 1
+    task_queue.extend_visibility(message["receipt_handle"], timeout)
+    message["visible_deadline"] = now + timeout
 
 
 async def _process_message(
@@ -97,6 +116,7 @@ async def _process_message(
     session: httpx.AsyncClient,
     max_depth: int,
     record_sink=None,
+    rate_limiter=None,
 ) -> None:
     domain = message["domain"]
     url = message["url"]
@@ -124,6 +144,12 @@ async def _process_message(
             print(f"[WORKER][WARN] worker run logging failed: {type(exc).__name__}: {exc}", flush=True)
     try:
         await ensure_robots(site)
+        if rate_limiter is not None:
+            # Crawl-delay を Worker 間で守るため、ドメインのアクセス枠を予約してから取得する
+            wait_sec = await rate_limiter.reserve(domain, site.crawl_delay)
+            if wait_sec > 0:
+                _extend_visibility_if_needed(task_queue, message, wait_sec)
+                await asyncio.sleep(wait_sec)
         task = URLTask(url=url, depth=message["depth"], discovered_from=message["discovered_from"])
         attempt = await run_url_task(site, task, session)
         site_cache.note_task_processed(domain)
@@ -182,9 +208,11 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
     record_writer = _record_writer_or_none()
     if record_writer is not None:
         await record_writer.start()
+    rate_limiter = get_domain_rate_limiter()
     site_cache = DomainSiteCache()
     active_run_ids: set[int] = set()
     max_depth = _env_int("ETL_WORKER_MAX_DEPTH", 5)
+    visibility_timeout_sec = _env_int("SQS_VISIBILITY_TIMEOUT_SEC", 180)
     httpx_timeout_sec = _env_int("ETL_HTTPX_TIMEOUT_SEC", 30)
     monitor_state = None
 
@@ -212,9 +240,17 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
                         worker_id=worker_id,
                     )
                 print(f"[WORKER] received {len(messages)} message(s)", flush=True)
-                await asyncio.gather(
-                    *(
-                        _process_message(
+                received_at = time.monotonic()
+                # FIFOキューは1回の受信で同じドメインのメッセージを複数返すことがある。
+                # 同じドメインへ同時にアクセスしないよう、ドメインごとに順番に処理する
+                by_domain: dict[str, list[dict]] = defaultdict(list)
+                for message in messages:
+                    message["visible_deadline"] = received_at + visibility_timeout_sec
+                    by_domain[message["domain"]].append(message)
+
+                async def _process_domain_messages(domain_messages: list[dict]) -> None:
+                    for message in domain_messages:
+                        await _process_message(
                             message,
                             task_queue=task_queue,
                             site_cache=site_cache,
@@ -225,10 +261,10 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
                             session=session,
                             max_depth=max_depth,
                             record_sink=record_writer.add if record_writer is not None else None,
+                            rate_limiter=rate_limiter,
                         )
-                        for message in messages
-                    )
-                )
+
+                await asyncio.gather(*(_process_domain_messages(m) for m in by_domain.values()))
     except Exception:
         exit_status = "failed"
         raise
@@ -236,6 +272,7 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
         stop_resource_monitor(monitor_state)
         if record_writer is not None:
             await record_writer.close()
+        rate_limiter.close()
         if queue_logger is not None:
             for run_id in active_run_ids:
                 try:

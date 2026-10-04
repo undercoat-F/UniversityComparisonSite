@@ -41,6 +41,12 @@ resource "aws_instance" "controlplane" {
     "Name" = "UniversityComparison-controlplane-${count.index + 1}"
     "Role" = "controlplane"
   }
+
+  # user_data は初回起動時にしか実行されない。既存インスタンスに後から差分が出ると
+  # 停止→再起動（パブリックIPの変更）になるため、作成後の変更は無視する
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 resource "aws_instance" "worker" {
@@ -60,6 +66,11 @@ resource "aws_instance" "worker" {
     "Name"      = "UniversityComparison-worker-${count.index + 1}"
     "Role"      = "worker"
     "WorkerId"  = "worker-${count.index + 1}"
+  }
+
+  # controlplane と同じ理由で、作成後の user_data の変更は無視する
+  lifecycle {
+    ignore_changes = [user_data]
   }
 }
 

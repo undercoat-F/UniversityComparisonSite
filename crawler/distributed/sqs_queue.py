@@ -8,7 +8,7 @@ try:
 except ImportError:  # pragma: no cover - boto3 is optional until wired in
     boto3 = None
 
-DEFAULT_MAX_DELAY_SECONDS = 900  # SQSのDelaySecondsは最大900秒(15分)
+MAX_VISIBILITY_TIMEOUT_SECONDS = 43200  # SQSの可視性タイムアウトは最大12時間
 
 
 class TaskQueue:
@@ -31,9 +31,12 @@ class TaskQueue:
         depth: int,
         domain: str,
         discovered_from: str = "",
-        delay_seconds: int = 0,
     ) -> str:
-        """URLタスクを送信する。戻り値はSQSのMessageId。"""
+        """URLタスクを送信する。戻り値はSQSのMessageId。
+
+        FIFOキューではメッセージ単位の DelaySeconds を指定できないため、遅延は付けない。
+        同一ドメインのアクセス間隔は Worker 側（domain_rate_limiter）で管理する。
+        """
         body = json.dumps(
             {
                 "run_id": run_id,
@@ -48,7 +51,6 @@ class TaskQueue:
             MessageBody=body,
             MessageGroupId=domain,
             MessageDeduplicationId=f"{domain}:{url}:{depth}",
-            DelaySeconds=max(0, min(DEFAULT_MAX_DELAY_SECONDS, int(delay_seconds))),
         )
         return response["MessageId"]
 
@@ -81,6 +83,17 @@ class TaskQueue:
     def delete_task(self, receipt_handle: str) -> None:
         """処理済みタスクをキューから削除する。"""
         self._client.delete_message(QueueUrl=self.queue_url, ReceiptHandle=receipt_handle)
+
+    def extend_visibility(self, receipt_handle: str, timeout_seconds: int) -> None:
+        """処理中タスクの可視性タイムアウトを、今から timeout_seconds 秒後まで延長する。
+
+        受信回数（ApproximateReceiveCount）は増えないため、DLQ への移動条件には影響しない。
+        """
+        self._client.change_message_visibility(
+            QueueUrl=self.queue_url,
+            ReceiptHandle=receipt_handle,
+            VisibilityTimeout=max(0, min(MAX_VISIBILITY_TIMEOUT_SECONDS, int(timeout_seconds))),
+        )
 
     def get_message_counts(self) -> dict[str, int]:
         """可視・処理中・遅延中の概算メッセージ数を取得する。"""
