@@ -1,5 +1,5 @@
 ﻿import asyncio
-import ast
+# import ast  # URLs.txt の読み込み（下記 load_targets_from_txt）でのみ使用
 import json
 import os
 import psycopg2
@@ -21,8 +21,9 @@ SEED_URLS_TABLE = get_table_ref("SEED_URLS_TABLE")
 UNIVERSITIES_TABLE = get_table_ref("UNIVERSITIES_TABLE")
 
 
-# (URL, depth) tuple list
-URL_LIST_PATH = os.path.join("ControlPlane", "URLs.txt")
+# URLs.txt からの起点読み込みは無効化した（seed テーブルが読めないときに本物の大学サイトをクロールしないため）
+# # (URL, depth) tuple list
+# URL_LIST_PATH = os.path.join("ControlPlane", "URLs.txt")
 #スキップする時間の設定（月単位）
 RECENT_SKIP_MONTHS_ENV = "ETL_RECENT_SKIP_MONTHS"
 
@@ -80,35 +81,37 @@ def load_targets_from_db():
         return []
 
 
-def load_targets_from_txt(path=URL_LIST_PATH):
-    if not os.path.exists(path):
-        return []
-
-    with open(path, "r", encoding="utf-8") as f:
-        targets = []
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if not line.startswith("("):
-                continue
-
-            tuple_expr = line[:-1] if line.endswith(",") else line
-            try:
-                item = ast.literal_eval(tuple_expr)
-            except Exception:
-                continue
-
-            if isinstance(item, tuple) and len(item) == 2:
-                targets.append((str(item[0]), int(item[1])))
-    return targets
+# def load_targets_from_txt(path=URL_LIST_PATH):
+#     if not os.path.exists(path):
+#         return []
+#
+#     with open(path, "r", encoding="utf-8") as f:
+#         targets = []
+#         for raw_line in f:
+#             line = raw_line.strip()
+#             if not line or line.startswith("#"):
+#                 continue
+#             if not line.startswith("("):
+#                 continue
+#
+#             tuple_expr = line[:-1] if line.endswith(",") else line
+#             try:
+#                 item = ast.literal_eval(tuple_expr)
+#             except Exception:
+#                 continue
+#
+#             if isinstance(item, tuple) and len(item) == 2:
+#                 targets.append((str(item[0]), int(item[1])))
+#     return targets
 
 
 def load_targets():
     targets = load_targets_from_db()
-    if targets:
-        return targets
-    return load_targets_from_txt()
+    if not targets:
+        print("[SCHEDULER][WARN] no seed URLs from DB (SEED_URLS_TABLE); nothing to crawl", flush=True)
+    return targets
+    # 以前は DB から読めないときに URLs.txt へ切り替えていた
+    # return load_targets_from_txt()
 
 
 def _normalize_domain(value: str) -> str:

@@ -26,21 +26,23 @@ class TestTaskQueue(unittest.TestCase):
         self.assertEqual(kwargs["MessageGroupId"], "example.edu")
         self.assertEqual(kwargs["QueueUrl"], "https://sqs.example/fake-queue.fifo")
 
-    def test_send_task_clamps_delay_seconds_to_max(self):
+    def test_send_task_does_not_set_per_message_delay(self):
+        # FIFOキューではメッセージ単位の DelaySeconds を指定できない
         queue, fake_client = self._make_queue()
 
-        queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu", delay_seconds=10_000)
+        queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu")
 
         _, kwargs = fake_client.send_message.call_args
-        self.assertEqual(kwargs["DelaySeconds"], 900)
+        self.assertNotIn("DelaySeconds", kwargs)
 
-    def test_send_task_rejects_negative_delay(self):
+    def test_extend_visibility_clamps_to_sqs_maximum(self):
         queue, fake_client = self._make_queue()
 
-        queue.send_task(run_id=123, url="https://example.edu/a", depth=0, domain="example.edu", delay_seconds=-5)
+        queue.extend_visibility("handle-1", 100_000)
 
-        _, kwargs = fake_client.send_message.call_args
-        self.assertEqual(kwargs["DelaySeconds"], 0)
+        _, kwargs = fake_client.change_message_visibility.call_args
+        self.assertEqual(kwargs["ReceiptHandle"], "handle-1")
+        self.assertEqual(kwargs["VisibilityTimeout"], 43200)
 
     def test_send_task_deduplication_id_varies_by_depth(self):
         queue, fake_client = self._make_queue()

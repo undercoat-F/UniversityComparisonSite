@@ -11,12 +11,26 @@ provider "aws" {
   region = "ap-northeast-1"
 }
 
+locals {
+  docker_bootstrap = <<-EOF
+    #!/bin/bash
+    set -e
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y docker.io docker-compose-v2
+    systemctl enable --now docker
+    usermod -aG docker ubuntu
+  EOF
+}
+
 resource "aws_instance" "controlplane" {
   count = var.controlplane_count
 
   ami           = var.ami_id
   instance_type = "t3.micro"
   key_name      = var.ec2_key_name
+  user_data     = local.docker_bootstrap
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
@@ -27,6 +41,12 @@ resource "aws_instance" "controlplane" {
     "Name" = "UniversityComparison-controlplane-${count.index + 1}"
     "Role" = "controlplane"
   }
+
+  # user_data は初回起動時にしか実行されない。既存インスタンスに後から差分が出ると
+  # 停止→再起動（パブリックIPの変更）になるため、作成後の変更は無視する
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 resource "aws_instance" "worker" {
@@ -35,6 +55,7 @@ resource "aws_instance" "worker" {
   ami           = var.ami_id
   instance_type = "t3.micro"
   key_name      = var.ec2_key_name
+  user_data     = local.docker_bootstrap
   vpc_security_group_ids = [
     aws_security_group.crawler.id
   ]
@@ -45,6 +66,11 @@ resource "aws_instance" "worker" {
     "Name"      = "UniversityComparison-worker-${count.index + 1}"
     "Role"      = "worker"
     "WorkerId"  = "worker-${count.index + 1}"
+  }
+
+  # controlplane と同じ理由で、作成後の user_data の変更は無視する
+  lifecycle {
+    ignore_changes = [user_data]
   }
 }
 

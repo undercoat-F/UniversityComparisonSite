@@ -54,3 +54,43 @@ variable "web_allowed_cidr" {
   description = "CIDR allowed to reach the Caddy HTTP and HTTPS listeners"
   default     = "0.0.0.0/0"
 }
+
+variable "benchmark_enabled" {
+  type        = bool
+  description = "Whether to create the isolated benchmark mock server infrastructure"
+  default     = false
+}
+
+variable "benchmark_instance_type" {
+  type        = string
+  description = "EC2 instance type for the benchmark mock server"
+  default     = "t3.medium"
+}
+
+variable "benchmark_root_volume_size_gb" {
+  type        = number
+  description = "Encrypted root EBS volume size for the benchmark EC2 operating system"
+  default     = 30
+
+  validation {
+    condition     = var.benchmark_root_volume_size_gb >= 20
+    error_message = "benchmark_root_volume_size_gb must be at least 20 GB."
+  }
+}
+
+variable "benchmark_data_volume_size_gb" {
+  type        = number
+  description = "Encrypted persistent EBS volume size for benchmark results"
+  default     = 100
+
+  validation {
+    condition     = var.benchmark_data_volume_size_gb >= 10
+    error_message = "benchmark_data_volume_size_gb must be at least 10 GB."
+  }
+}
+
+variable "benchmark_domain_suffix" {
+  type        = string
+  description = "Private Route 53 zone and wildcard domain suffix used by mock scenarios"
+  default     = "bench.internal"
+}

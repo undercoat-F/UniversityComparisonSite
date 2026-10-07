@@ -40,7 +40,13 @@ resource "aws_iam_role" "crawl_queue" {
   assume_role_policy = data.aws_iam_policy_document.crawl_queue_assume_role.json
 }
 
+locals {
+  # AWSコンソールで追加されていたS3権限をコードに取り込んだもの
+  storage_bucket_arn = "arn:aws:s3:::personalproject-storage-coat-429056788124-ap-northeast-1-an"
+}
+
 data "aws_iam_policy_document" "crawl_queue_access" {
+  # AWS上の既存ポリシーと差分が出ないよう、SQSとS3を1つのステートメントにまとめている
   statement {
     actions = [
       "sqs:SendMessage",
@@ -49,10 +55,15 @@ data "aws_iam_policy_document" "crawl_queue_access" {
       "sqs:GetQueueUrl",
       "sqs:GetQueueAttributes",
       "sqs:ChangeMessageVisibility",
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:ListBucket",
     ]
     resources = [
       aws_sqs_queue.crawl_tasks.arn,
       aws_sqs_queue.crawl_tasks_dlq.arn,
+      "${local.storage_bucket_arn}/*",
+      local.storage_bucket_arn,
     ]
   }
 }

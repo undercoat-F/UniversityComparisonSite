@@ -1,0 +1,20 @@
+# 性能計測用の追加設定。docker-compose.yml に重ねて使う（.env は変更しない）
+#   docker compose -f docker-compose.yml -f docker-compose.bench.yml --profile distributed up -d worker
+#
+# Mock Server（*.bench.internal）の HTTPS を信頼させるため、
+# python -m benchmark.distribute_certs で配布した CA をコンテナに読み込ませる。
+# ca-bundle.pem は certifi の CA 一覧に Mock の CA を加えたものなので、SQS・Valkey などへの接続にも影響しない。
+x-benchmark-ca: &benchmark-ca
+  environment:
+    SSL_CERT_FILE: /certs/ca-bundle.pem
+    REQUESTS_CA_BUNDLE: /certs/ca-bundle.pem
+  volumes:
+    - /etc/benchmark/ca-bundle.pem:/certs/ca-bundle.pem:ro
+
+services:
+  controlplane:
+    <<: *benchmark-ca
+  worker:
+    <<: *benchmark-ca
+  etl:
+    <<: *benchmark-ca

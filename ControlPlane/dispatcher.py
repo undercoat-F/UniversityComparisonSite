@@ -200,7 +200,6 @@ async def enqueue_initial_tasks(targets: list[tuple[str, int]]) -> list[SiteStat
                 depth=task.depth,
                 domain=site.domain,
                 discovered_from=task.discovered_from,
-                delay_seconds=0,
             )
             site.pop_next_task()
             queued_count += 1
