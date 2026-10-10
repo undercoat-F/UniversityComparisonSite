@@ -72,7 +72,7 @@ sudo docker compose --profile distributed stop worker
 
 ```bash
 python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem
-python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem --check   # HTTP 200 になること
+python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem --check   # HTTP 404 になること（シナリオにないホストへの確認。000 なら証明書か名前解決の失敗）
 ```
 
 ---
@@ -132,7 +132,10 @@ Valkey は VPC 内からしか接続できないため Control Plane で、SQS �
 
 ```bash
 # 手元の PC: pages.csv を Control Plane に送り、SQS を片付ける
+# benchmark/results/ は .gitignore 対象で clone では作られないため、先に作る（ないと scp が失敗する）
+ssh -i ~/UniversityComparisonKey.pem ubuntu@35.73.202.127 "mkdir -p ~/bench-app/benchmark/results"
 scp -i ~/UniversityComparisonKey.pem -r benchmark/results/B-inspect ubuntu@35.73.202.127:~/bench-app/benchmark/results/
+ssh -i ~/UniversityComparisonKey.pem ubuntu@35.73.202.127 "ls ~/bench-app/benchmark/results/B-inspect"   # pages.csv があること
 python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey             # 確認のみ
 python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey --execute   # 実行
 
@@ -217,3 +220,64 @@ python -m benchmark.analysis.report run benchmark/results/B-smoke-x1-run1
 ```
 
 期待する結果: coverage 100%、Crawl-delay violations 0、unexpected failures 0。
+
+#-------------------
+1.片付け用のURL一覧を作る
+python -m benchmark.mock.inspect_scenario benchmark/mock/scenarios/B_crawl_delay.yaml --out benchmark/results/B-inspect
+
+2.: Neon の bench-run を初期状態に戻す
+python -m benchmark.neon_branch reset
+仮想環境を有効にしないと起動できない(スクリプトのライブラリが入っていないから)
+
+3.sshで各EC2へ入り、git clone,.envのコピー
+
+4.4：Valkey と SQS の片付け
+
+片付けは 2 か所で行います。SQS は、キューを空にする権限がある手元の PC から行います。Valkey は VPC の中からしか接続できないので、Control Plane から行います。どちらも、まず確認だけ（何も消さない）で実行してください。
+
+① 手元の PC（Git Bash、リポジトリのルート）
+python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey
+
+② Control Plane（pages.csv を送ってから、~/bench-app で
+python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey
+
+② Control Plane（pages.csv を送ってから、~/bench-app で
+# 手元の PC から送る
+scp -i ~/UniversityComparisonKey.pem -r benchmark/results/B-inspect ubuntu@35.73.202.127:~/bench-app/benchmark/results/
+
+# Control Plane で実行
+cd ~/bench-app
+alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile distributed'
+bench run --rm --build -v "$PWD/benchmark:/app/benchmark" controlplane \
+  python -m benchmark.reset_state --pages /app/benchmar --skip-sqs
+
+5.Worker 1 で計測用の Worker を起動
+
+Worker 1 に SSH で入って
+
+cd ~/bench-app
+alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile distributed'
+bench up -d --build worker
+bench logs -f worker
+
+- 初回はビルドがあるので、t3.micro だと数分かかるかもしれません。
+- logs -f はログを流し続けます。Ctrl+C で抜けてもコンテナは止まりません。
+
+ 6：producer の実行（Control Plane で）
+
+Worker 1 のログは別のターミナルで流したままにしておくと、両方を同時に見られて分かりやすいです。
+
+cd ~/bench-app
+alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile distributed'
+bench run --rm controlplane
+
+レコード集計
+Worker を止める（Worker 1）
+bench stop worker
+bench logs worker | grep RECORD_DB
+
+ Mock を止めて結果を回収・集計する（手順書のステップ 8・9）
+   - Mock の停止：sudo systemctl stop bench-mock
+   - 手元の PC で実行：
+scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/B-smoke-x1-run1 benchmark/results/
+python -m benchmark.analysis.report run benchmark/results/B-smoke-x1-run1

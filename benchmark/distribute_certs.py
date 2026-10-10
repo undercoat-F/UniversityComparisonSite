@@ -29,7 +29,10 @@ REMOTE_DIR = "/etc/benchmark"
 SSH_USER = "ubuntu"
 MOCK_ROLE = "benchmark"
 CRAWLER_ROLES = ("controlplane", "worker", "legacy")
-CHECK_URL = "https://domain-a.bench.internal/robots.txt"
+# シナリオにないホストへ接続する。アクセスログには "undefined" として残るが、集計（benchmark.analysis）の
+# 対象はシナリオのドメインだけなので、計測中の run-label のログに確認のアクセスが混ざっても結果に影響しない。
+# Mock は未定義のホストに 404 を返す。HTTP の応答が返れば、名前解決と証明書の検証は通っている。
+CHECK_URL = "https://connectivity-check.bench.internal/"
 
 
 def find_instances(region: str | None) -> list[dict]:
@@ -98,13 +101,15 @@ def distribute(instance: dict, key: str, dry_run: bool) -> bool:
 def check(instance: dict, key: str, dry_run: bool) -> bool:
     """クローラー側のインスタンスから、配布した CA で Mock に HTTPS 接続できるか確認する。"""
     host = f"{SSH_USER}@{instance['public_ip']}"
-    remote = (f"getent hosts domain-a.bench.internal; "
+    check_host = CHECK_URL.split("/")[2]
+    remote = (f"getent hosts {check_host}; "
               f"curl -sS -o /dev/null -w 'HTTP %{{http_code}}\\n' --cacert {REMOTE_DIR}/ca-bundle.pem {CHECK_URL}")
     result = run(["ssh", *ssh_base(key), host, remote], dry_run)
     if result is None:
         return True
     print("  " + (result.stdout + result.stderr).strip().replace("\n", "\n  "))
-    return result.returncode == 0 and "HTTP 200" in result.stdout
+    # 証明書の検証に失敗すると curl は応答を受け取れず HTTP 000 になる
+    return result.returncode == 0 and "HTTP 000" not in result.stdout and "HTTP " in result.stdout
 
 
 def main() -> None:
