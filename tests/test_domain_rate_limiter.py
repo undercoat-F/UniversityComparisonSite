@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 import unittest
 from unittest.mock import MagicMock
 
@@ -33,6 +34,15 @@ class TestLocalDomainRateLimiter(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(await limiter.reserve("b.edu", 2.0), 0.0, places=2)
         self.assertEqual(await limiter.reserve("c.edu", 0.0), 0.0)
         self.assertEqual(await limiter.reserve("c.edu", 0.0), 0.0)
+
+    async def test_mark_started_pushes_next_slot_from_actual_start(self):
+        # 待ち明けが遅れて実際の開始が予約より後になっても、次の枠は実際の開始から Crawl-delay 後になる
+        limiter = LocalDomainRateLimiter()
+        await limiter.reserve("a.edu", 1.0)
+        time.sleep(0.2)  # 実際の開始が 0.2 秒遅れた
+        await limiter.mark_started("a.edu", 1.0)
+
+        self.assertAlmostEqual(await limiter.reserve("a.edu", 1.0), 1.0, delta=0.05)
 
 
 @unittest.skipIf(fakeredis is None, "fakeredis[lua] is not installed")
@@ -77,6 +87,20 @@ class TestValkeyDomainRateLimiter(unittest.IsolatedAsyncioTestCase):
         ttl_ms = self.client.pttl(KEY_PREFIX + "a.edu")
         self.assertGreater(ttl_ms, 2000)
         self.assertLessEqual(ttl_ms, 2000 + 10 * 60 * 1000)
+
+    async def test_mark_started_pushes_next_slot_from_actual_start(self):
+        await self.limiter.reserve("a.edu", 1.0)
+        time.sleep(0.2)
+        await self.limiter.mark_started("a.edu", 1.0)
+
+        self.assertAlmostEqual(await self.limiter.reserve("a.edu", 1.0), 1.0, delta=0.05)
+
+    async def test_mark_started_does_not_shorten_an_existing_reservation(self):
+        await self.limiter.reserve("a.edu", 1.0)
+        await self.limiter.reserve("a.edu", 1.0)   # 次の枠まで予約済み（2秒先まで埋まっている）
+        await self.limiter.mark_started("a.edu", 1.0)
+
+        self.assertAlmostEqual(await self.limiter.reserve("a.edu", 1.0), 2.0, delta=0.05)
 
 
 class TestValkeyFallback(unittest.IsolatedAsyncioTestCase):

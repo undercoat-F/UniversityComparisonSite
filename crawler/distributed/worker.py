@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import signal
 import socket
 import time
-from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import httpx
@@ -150,6 +151,8 @@ async def _process_message(
             if wait_sec > 0:
                 _extend_visibility_if_needed(task_queue, message, wait_sec)
                 await asyncio.sleep(wait_sec)
+            # 待ち明けが遅れても間隔が縮まないよう、実際の開始時刻を基準に次回時刻を記録する
+            await rate_limiter.mark_started(domain, site.crawl_delay)
         task = URLTask(url=url, depth=message["depth"], discovered_from=message["discovered_from"])
         attempt = await run_url_task(site, task, session)
         site_cache.note_task_processed(domain)
@@ -199,8 +202,28 @@ def _record_writer_or_none() -> RecordBatchWriter | None:
     )
 
 
-async def run_worker(*, max_concurrency: int = 4) -> None:
-    """SQSからURLタスクを受信し、クロールして新規リンクを再投入するConsumerループ。"""
+async def _run_until_first_error(tasks: list[asyncio.Task]) -> None:
+    """どれか1つのタスクが例外で終わったら、残りをキャンセルしてその例外を送出する。"""
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for task in done:
+            if task.exception() is not None:
+                raise task.exception()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def run_worker(*, max_concurrency: int | None = None) -> None:
+    """SQSからURLタスクを受信し、クロールして新規リンクを再投入するConsumerループ。
+
+    「1件ずつ受信して処理する窓口（consumer）」を max_concurrency 個並べ、窓口ごとに独立して回す。
+    FIFOキューは処理中のメッセージがあるグループ（ドメイン）のメッセージを他の受信に渡さないため、
+    各窓口には自動的に別々のドメインが届き、同じドメインへの同時アクセスも起きない。
+    （以前は最大4件をまとめて受信していたが、同じドメインがまとめて届き、ドメインが順番に処理されていた）
+    """
+    max_concurrency = max_concurrency or _env_int("WORKER_MAX_CONCURRENCY", 4)
     task_queue = get_task_queue()
     dedup_store = _get_dedup_store_or_none()
     worker_id = _worker_id()
@@ -221,6 +244,10 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
         f"max_concurrency={max_concurrency}",
         flush=True,
     )
+    # 受信は最大20秒待つ同期処理（boto3）のため別スレッドで行う。共有のスレッドプールを使うと、
+    # 待機中の受信で枠が埋まり、Valkey の予約や DB 書き込みなど他の to_thread 処理が詰まるため専用にする
+    receive_executor = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="sqs-receive")
+    loop = asyncio.get_running_loop()
     exit_status = "stopped"
     try:
         async with httpx.AsyncClient(
@@ -228,47 +255,48 @@ async def run_worker(*, max_concurrency: int = 4) -> None:
             timeout=httpx_timeout_sec,
             follow_redirects=True,
         ) as session:
-            while True:
-                messages = task_queue.receive_tasks(max_messages=max_concurrency, wait_time_seconds=20)
-                if not messages:
-                    print("[WORKER] waiting for messages...", flush=True)
-                    continue
-                if monitor_state is None:
-                    monitor_state = start_resource_monitor(
-                        datetime.now().strftime("%Y%m%d_%H%M%S"),
-                        run_id=messages[0]["run_id"],
-                        worker_id=worker_id,
+
+            async def _consumer(slot: int) -> None:
+                nonlocal monitor_state
+                while True:
+                    messages = await loop.run_in_executor(
+                        receive_executor,
+                        functools.partial(task_queue.receive_tasks, max_messages=1, wait_time_seconds=20),
                     )
-                print(f"[WORKER] received {len(messages)} message(s)", flush=True)
-                received_at = time.monotonic()
-                # FIFOキューは1回の受信で同じドメインのメッセージを複数返すことがある。
-                # 同じドメインへ同時にアクセスしないよう、ドメインごとに順番に処理する
-                by_domain: dict[str, list[dict]] = defaultdict(list)
-                for message in messages:
-                    message["visible_deadline"] = received_at + visibility_timeout_sec
-                    by_domain[message["domain"]].append(message)
-
-                async def _process_domain_messages(domain_messages: list[dict]) -> None:
-                    for message in domain_messages:
-                        await _process_message(
-                            message,
-                            task_queue=task_queue,
-                            site_cache=site_cache,
-                            dedup_store=dedup_store,
-                            queue_logger=queue_logger,
+                    if not messages:
+                        if slot == 0:
+                            print("[WORKER] waiting for messages...", flush=True)
+                        continue
+                    message = messages[0]
+                    message["visible_deadline"] = time.monotonic() + visibility_timeout_sec
+                    if monitor_state is None:
+                        monitor_state = start_resource_monitor(
+                            datetime.now().strftime("%Y%m%d_%H%M%S"),
+                            run_id=message["run_id"],
                             worker_id=worker_id,
-                            active_run_ids=active_run_ids,
-                            session=session,
-                            max_depth=max_depth,
-                            record_sink=record_writer.add if record_writer is not None else None,
-                            rate_limiter=rate_limiter,
                         )
+                    await _process_message(
+                        message,
+                        task_queue=task_queue,
+                        site_cache=site_cache,
+                        dedup_store=dedup_store,
+                        queue_logger=queue_logger,
+                        worker_id=worker_id,
+                        active_run_ids=active_run_ids,
+                        session=session,
+                        max_depth=max_depth,
+                        record_sink=record_writer.add if record_writer is not None else None,
+                        rate_limiter=rate_limiter,
+                    )
 
-                await asyncio.gather(*(_process_domain_messages(m) for m in by_domain.values()))
+            consumers = [asyncio.create_task(_consumer(slot), name=f"consumer-{slot}") for slot in range(max_concurrency)]
+            await _run_until_first_error(consumers)
     except Exception:
         exit_status = "failed"
         raise
     finally:
+        # 受信中のスレッドは最大20秒で戻るが、終了処理を待たせないよう待たずに閉じる
+        receive_executor.shutdown(wait=False, cancel_futures=True)
         stop_resource_monitor(monitor_state)
         if record_writer is not None:
             await record_writer.close()

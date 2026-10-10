@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import threading
 import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -143,6 +144,7 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         task_queue = MagicMock()
         site_cache = DomainSiteCache()
         rate_limiter = MagicMock()
+        rate_limiter.mark_started = AsyncMock()
         rate_limiter.reserve = AsyncMock(return_value=1.5)
         message = {
             "receipt_handle": "handle-1",
@@ -175,6 +177,7 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
             )
 
         rate_limiter.reserve.assert_awaited_once_with("example.edu", 2.0)
+        rate_limiter.mark_started.assert_awaited_once_with("example.edu", 2.0)
         self.assertEqual(events, [("sleep", 1.5), ("fetch", "https://example.edu/a")])
         _, kwargs = task_queue.send_task.call_args
         self.assertNotIn("delay_seconds", kwargs)
@@ -182,6 +185,7 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
     async def test_extends_visibility_when_wait_would_outlive_it(self):
         task_queue = MagicMock()
         rate_limiter = MagicMock()
+        rate_limiter.mark_started = AsyncMock()
         rate_limiter.reserve = AsyncMock(return_value=100.0)
         message = {
             "receipt_handle": "handle-1",
@@ -209,25 +213,52 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
 
 
 
-class TestRunWorkerOrdering(unittest.IsolatedAsyncioTestCase):
-    async def test_same_domain_messages_are_processed_one_at_a_time(self):
+class FakeFifoQueue:
+    """SQS FIFO の性質を真似る: 処理中（未削除）のメッセージがあるドメインのメッセージは他の受信に渡さない。"""
+
+    queue_url = "https://sqs.example/crawl-tasks.fifo"
+
+    def __init__(self, messages):
+        self.pending = list(messages)
+        self.in_flight: dict[str, str] = {}  # receipt_handle -> domain
+        self.lock = threading.Lock()
+        self.max_messages_requested: set[int] = set()
+
+    def receive_tasks(self, max_messages=10, wait_time_seconds=20):
+        self.max_messages_requested.add(max_messages)
+        with self.lock:
+            busy = set(self.in_flight.values())
+            for message in self.pending:
+                if message["domain"] not in busy:
+                    self.pending.remove(message)
+                    self.in_flight[message["receipt_handle"]] = message["domain"]
+                    return [dict(message)]
+        time.sleep(0.01)
+        return []
+
+    def delete_task(self, receipt_handle):
+        with self.lock:
+            self.in_flight.pop(receipt_handle, None)
+
+
+class TestRunWorkerConsumers(unittest.IsolatedAsyncioTestCase):
+    async def test_consumers_process_different_domains_in_parallel(self):
         import asyncio
 
         from crawler.distributed.worker import run_worker
 
-        def msg(domain, path):
-            return {"run_id": 1, "url": f"https://{domain}{path}", "depth": 0, "domain": domain,
-                    "discovered_from": "", "receipt_handle": path}
+        def msg(domain, i):
+            return {"run_id": 1, "url": f"https://{domain}/{i}", "depth": 0, "domain": domain,
+                    "discovered_from": "", "receipt_handle": f"{domain}/{i}"}
 
-        task_queue = MagicMock()
-        task_queue.queue_url = "https://sqs.example/crawl-tasks.fifo"
-        task_queue.receive_tasks.side_effect = [
-            [msg("a.edu", "/1"), msg("a.edu", "/2"), msg("b.edu", "/1")],
-            KeyboardInterrupt(),
-        ]
+        # 以前の実装（最大4件をまとめて受信）では a.edu の4件がまとめて届き、順番に処理されていた
+        messages = [msg(d, i) for d in ("a.edu", "b.edu", "c.edu") for i in range(4)]
+        task_queue = FakeFifoQueue(messages)
         active: dict[str, int] = {}
         max_active: dict[str, int] = {}
         overall_max = 0
+        processed = []
+        all_done = asyncio.Event()
 
         async def fake_process(message, **kwargs):
             nonlocal overall_max
@@ -235,8 +266,12 @@ class TestRunWorkerOrdering(unittest.IsolatedAsyncioTestCase):
             active[domain] = active.get(domain, 0) + 1
             max_active[domain] = max(max_active.get(domain, 0), active[domain])
             overall_max = max(overall_max, sum(active.values()))
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)
             active[domain] -= 1
+            processed.append(message["url"])
+            kwargs["task_queue"].delete_task(message["receipt_handle"])
+            if len(processed) == len(messages):
+                all_done.set()
 
         with patch("crawler.distributed.worker.get_task_queue", return_value=task_queue), patch(
             "crawler.distributed.worker._get_dedup_store_or_none", return_value=None
@@ -245,11 +280,16 @@ class TestRunWorkerOrdering(unittest.IsolatedAsyncioTestCase):
         ), patch("crawler.distributed.worker.start_resource_monitor", return_value=None), patch(
             "crawler.distributed.worker._process_message", new=fake_process
         ):
-            with self.assertRaises(KeyboardInterrupt):
-                await run_worker()
+            worker = asyncio.create_task(run_worker(max_concurrency=4))
+            await asyncio.wait_for(all_done.wait(), timeout=10)
+            worker.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await worker
 
-        self.assertEqual(max_active["a.edu"], 1)  # 同じドメインは同時に処理しない
-        self.assertEqual(overall_max, 2)          # 別ドメインは並行して処理する
+        self.assertEqual(sorted(processed), sorted(m["url"] for m in messages))
+        self.assertEqual(task_queue.max_messages_requested, {1})        # 1件ずつ受信する
+        self.assertTrue(all(n == 1 for n in max_active.values()))       # 同じドメインは同時に処理しない
+        self.assertEqual(overall_max, 3)                                # 3ドメインを並行して処理する
 
 
 if __name__ == "__main__":
