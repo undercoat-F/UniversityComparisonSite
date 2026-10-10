@@ -106,9 +106,11 @@ def load_targets_from_txt(path=URL_LIST_PATH):
 
 def load_targets():
     targets = load_targets_from_db()
-    if targets:
-        return targets
-    return load_targets_from_txt()
+    if not targets:
+        print("[SCHEDULER][WARN] no seed URLs from DB (SEED_URLS_TABLE); nothing to crawl", flush=True)
+    return targets
+    # [benchmark/legacy] seed テーブルが読めないときに URLs.txt（本物の大学サイト）をクロールしないよう無効化
+    # return load_targets_from_txt()
 
 
 def _normalize_domain(value: str) -> str:

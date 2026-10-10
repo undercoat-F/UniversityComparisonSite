@@ -1,0 +1,12 @@
+# 性能計測用の追加設定（benchmark/legacy）。docker-compose.yml に重ねて使う（.env は変更しない）
+#   sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile etl run --rm --build etl
+#
+# Mock Server（*.bench.internal）の HTTPS を信頼させるため、
+# python -m benchmark.distribute_certs で配布した CA をコンテナに読み込ませる（sqs-distributed ブランチと同じ内容）。
+services:
+  etl:
+    environment:
+      SSL_CERT_FILE: /certs/ca-bundle.pem
+      REQUESTS_CA_BUNDLE: /certs/ca-bundle.pem
+    volumes:
+      - /etc/benchmark/ca-bundle.pem:/certs/ca-bundle.pem:ro

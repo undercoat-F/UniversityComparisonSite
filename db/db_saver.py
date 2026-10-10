@@ -483,6 +483,11 @@ def _insert_patterns_rows(conn, rows):
     id_map = {}
     try:
         payload = []
+        # 一意制約 (degree_level, amount, currency, fee_type, tuition_type) が同じ行が1回の INSERT に
+        # 複数含まれると ON CONFLICT DO UPDATE がエラーになるため、代表の1行にまとめる（後勝ち）。
+        # NULL を含むキーは PostgreSQL 上で衝突しないため、まとめない。
+        index_by_conflict_key = {}
+        csv_ids_by_representative_id = {}
         for row in rows:
             csv_id = str(row.get("id", "")).strip()
             degree_level = str(row.get("degree_level", "")).strip() or None
@@ -494,20 +499,31 @@ def _insert_patterns_rows(conn, rows):
             amount_max = parse_optional_float(row.get("amount_max", ""))
             normalized_monthly_amount = parse_optional_float(row.get("normalized_monthly_amount", ""))
             normalization_note = str(row.get("normalization_note", "unknown_not_normalized")).strip() or "unknown_not_normalized"
-            payload.append(
-                (
-                    csv_id,
-                    degree_level,
-                    amount,
-                    currency,
-                    fee_type,
-                    tuition_type,
-                    amount_min,
-                    amount_max,
-                    normalized_monthly_amount,
-                    normalization_note,
-                )
+            values = (
+                csv_id,
+                degree_level,
+                amount,
+                currency,
+                fee_type,
+                tuition_type,
+                amount_min,
+                amount_max,
+                normalized_monthly_amount,
+                normalization_note,
             )
+            conflict_key = (degree_level, amount, currency, fee_type, tuition_type)
+            if None not in conflict_key and conflict_key in index_by_conflict_key:
+                index = index_by_conflict_key[conflict_key]
+                previous_csv_id = payload[index][0]
+                merged_csv_ids = csv_ids_by_representative_id.pop(previous_csv_id)
+                merged_csv_ids.append(csv_id)
+                csv_ids_by_representative_id[csv_id] = merged_csv_ids
+                payload[index] = values
+                continue
+            if None not in conflict_key:
+                index_by_conflict_key[conflict_key] = len(payload)
+            csv_ids_by_representative_id[csv_id] = [csv_id]
+            payload.append(values)
 
         batch_size = max(1, _env_int(BATCH_SIZE_ENV, BATCH_SIZE_DEFAULT))
         sql_stmt = f"""
@@ -526,15 +542,17 @@ def _insert_patterns_rows(conn, rows):
             upsert AS (
                 INSERT INTO {TUITION_PATTERNS_TABLE}
                 (degree_level, amount, currency, fee_type, tuition_type, amount_min, amount_max, normalized_monthly_amount, normalization_note)
+                -- VALUES の列の型は値から推測されるため、まとめた行の値がすべて NULL だと text になり、
+                -- numeric の列に入れられずエラーになる。数値の列は型を明示する。
                 SELECT
                     src.degree_level,
-                    src.amount,
+                    src.amount::numeric,
                     src.currency,
                     src.fee_type,
                     src.tuition_type,
-                    src.amount_min,
-                    src.amount_max,
-                    src.normalized_monthly_amount,
+                    src.amount_min::numeric,
+                    src.amount_max::numeric,
+                    src.normalized_monthly_amount::numeric,
                     src.normalization_note
                 FROM src
                 ON CONFLICT (degree_level, amount, currency, fee_type, tuition_type)
@@ -549,7 +567,7 @@ def _insert_patterns_rows(conn, rows):
             FROM src
             JOIN upsert
                 ON upsert.degree_level IS NOT DISTINCT FROM src.degree_level
-               AND upsert.amount IS NOT DISTINCT FROM src.amount
+               AND upsert.amount IS NOT DISTINCT FROM src.amount::numeric
                AND upsert.currency IS NOT DISTINCT FROM src.currency
                AND upsert.fee_type = src.fee_type
                AND upsert.tuition_type = src.tuition_type;
@@ -557,7 +575,8 @@ def _insert_patterns_rows(conn, rows):
         for chunk in _chunked(payload, batch_size):
             execute_values(cursor, sql_stmt, chunk)
             for csv_id, db_id in cursor.fetchall():
-                id_map[str(csv_id)] = int(db_id)
+                for original_csv_id in csv_ids_by_representative_id[str(csv_id)]:
+                    id_map[original_csv_id] = int(db_id)
             inserted += len(chunk)
 
         conn.commit()
