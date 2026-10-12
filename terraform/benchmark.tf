@@ -171,3 +171,31 @@ output "benchmark_wildcard_domain" {
   description = "Wildcard private DNS name used by benchmark scenarios, or null when disabled"
   value       = var.benchmark_enabled ? "*.${var.benchmark_domain_suffix}" : null
 }
+# Legacy（分散化前）クローラーの計測用 EC2。分散版 Worker と同じ条件（AMI・インスタンスタイプ・
+# Security Group・サブネット・起動時スクリプト）にそろえる。Crawler 用 Security Group に入れることで
+# Mock（443/tcp）に接続できる。Legacy は SQS・Valkey を使わないため IAM ロールは付けない
+resource "aws_instance" "benchmark_legacy" {
+  count = var.benchmark_enabled && var.benchmark_legacy_enabled ? 1 : 0
+
+  ami                    = var.ami_id
+  instance_type          = "t3.micro" # aws_instance.worker と同じ
+  key_name               = var.ec2_key_name
+  user_data              = local.docker_bootstrap
+  vpc_security_group_ids = [aws_security_group.crawler.id]
+  subnet_id              = var.subnet_id
+
+  tags = {
+    Name = "UniversityComparison-legacy"
+    Role = "legacy"
+  }
+}
+
+output "benchmark_legacy_public_ip" {
+  description = "Public IP of the Legacy crawler EC2, or null when disabled"
+  value       = length(aws_instance.benchmark_legacy) > 0 ? aws_instance.benchmark_legacy[0].public_ip : null
+}
+
+output "benchmark_legacy_private_ip" {
+  description = "Private IP of the Legacy crawler EC2 (client_ip in the mock access log), or null when disabled"
+  value       = length(aws_instance.benchmark_legacy) > 0 ? aws_instance.benchmark_legacy[0].private_ip : null
+}

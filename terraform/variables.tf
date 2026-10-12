@@ -94,3 +94,8 @@ variable "benchmark_domain_suffix" {
   description = "Private Route 53 zone and wildcard domain suffix used by mock scenarios"
   default     = "bench.internal"
 }
+variable "benchmark_legacy_enabled" {
+  type        = bool
+  description = "Whether to create the Legacy (pre-distributed) crawler EC2 used as the benchmark baseline"
+  default     = false
+}
