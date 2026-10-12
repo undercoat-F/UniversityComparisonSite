@@ -6,7 +6,7 @@ scheme: https                 # クローラーは robots.txt / sitemap を http
 domain_suffix: bench.internal
 
 # ドメイン数の指定：total_domains + mix（比率） / counts（件数） / domains（個別列挙）のいずれか1つ
-total_domains: 10000
+total_domains: 100
 mix:                          # 比率の合計は1.0。端数は最大剰余法で配分する
   normal: 0.90
   slow: 0.04
@@ -35,7 +35,7 @@ profiles:
     responses: {fast: 0.5, slow: 0.4, very_slow: 0.1}
   failure:
     inherit: normal
-    responses: {fast: 0.8, error_500: 0.1, timeout: 0.1}
+    responses: {fast: 0.88, error_500: 0.1, timeout: 0.02}   # タイムアウトは1ページあたり約60秒かかり、ドメインの処理時間の下限を押し上げるため1ドメイン1ページに抑える
   robots_error:
     inherit: normal
     # 404: クローラーは robots.txt なし（全許可・Crawl-delay なし）として扱う

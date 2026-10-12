@@ -281,3 +281,40 @@ bench logs worker | grep RECORD_DB
    - 手元の PC で実行：
 scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/B-smoke-x1-run1 benchmark/results/
 python -m benchmark.analysis.report run benchmark/results/B-smoke-x1-run1
+
+-----
+1. 手元の PC：Neon を初期状態に戻す
+python -m benchmark.neon_branch reset
+bench-run には、前回の計測データと、型エラーの確認で入れたテスト用の 3 行が残っています。それを消すためです。
+
+2. Control Plane と Worker 1：最新のコードにする
+cd ~/bench-app && git pull && git log --oneline -1     # 1b932ff と出ること
+
+3. 片付け（前回の計測で Valkey に記録が残っているので、今回は --execute まで実行します）
+# 手元の PC：SQS（確認してから、件数があれば --execute）
+python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey
+
+# Control Plane（alias bench を設定してから）：Valkey
+bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
+  python -m benchmark.reset_state --pages /app/benchmark/results/B-inspect/pages.csv --skip-sqs --execute
+Valkey の重複排除キーが「〜 exist」と表示され、deleted … と出れば消えています。
+
+4. Mock の EC2：新しい run-label で起動し直す
+sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
+sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
+  -m benchmark.mock.server --scenario benchmark/mock/scenarios/B_crawl_delay.yaml --run-label B-fifofix-x1-run1 \
+  --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
+systemctl is-active bench-mock
+
+5. Worker 1：ビルドし直して起動する
+bench up -d --build worker
+bench logs -f worker
+start … max_concurrency=4 が出れば OK です。前回と違って、received 4 message(s) の行は出なくなります。
+
+6. Control Plane：producer を実行する
+bench run --rm controlplane
+
+7. 終わったら止めて、集計し、改善前と比べる（手元の PC）
+scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/B-fifofix-x1-run1 benchmark/results/
+python -m benchmark.analysis.report run benchmark/results/B-fifofix-x1-run1
+python -m benchmark.analysis.report compare benchmark/results/B-smoke-x1-run1 benchmark/results/B-fifofix-x1-run1 --baseline B-smoke-x1

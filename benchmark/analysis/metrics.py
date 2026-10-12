@@ -242,3 +242,45 @@ def summarize_crawl_delay(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "min_margin_sec": min((r["min_interval"] - r["required_delay"] for r in applicable), default=None),
         "retry_pairs": sum(r["retry_pairs"] for r in rows),
     }
+
+
+def compute_resource_usage(run_dir: str | Path, start_ts: Optional[float], end_ts: Optional[float]) -> dict[str, Any]:
+    """resources/*.csv（各インスタンスの etl_resource_log、benchmark.collect_resources で回収）から CPU・メモリを集計する。
+
+    - 計測期間（Mock のアクセスログの最初〜最後）に含まれるサンプルだけを使う。タイムスタンプは EC2 の時刻（UTC）
+    - 期間内のサンプルがないファイルは集計しない（その計測で使っていない Worker の古い記録が混ざらないように）
+    """
+    files = sorted(Path(run_dir).glob("resources/*.csv"))
+    if not files:
+        return {}
+    from datetime import datetime, timedelta, timezone
+
+    window = None
+    if start_ts is not None and end_ts is not None:
+        to_utc = lambda ts: datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)  # noqa: E731
+        window = (to_utc(start_ts) - timedelta(seconds=5), to_utc(end_ts) + timedelta(seconds=5))
+
+    hosts = {}
+    for path in files:
+        with path.open(encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+        if window:
+            rows = [r for r in rows if window[0] <= datetime.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S") <= window[1]]
+        if not rows:
+            continue
+        cpu = [float(r["system_cpu_percent"]) for r in rows]
+        hosts[path.stem] = {
+            "samples": len(rows),
+            "cpu_avg_percent": sum(cpu) / len(cpu),
+            "cpu_max_percent": max(cpu),
+            "rss_max_mb": max(float(r["process_rss_mb"]) for r in rows),
+            "memory_max_percent": max(float(r["system_memory_percent"]) for r in rows),
+        }
+    if not hosts:
+        return {}
+    return {
+        "hosts": hosts,
+        "cpu_avg_percent": sum(h["cpu_avg_percent"] for h in hosts.values()) / len(hosts),
+        "cpu_max_percent": max(h["cpu_max_percent"] for h in hosts.values()),
+        "rss_max_mb": max(h["rss_max_mb"] for h in hosts.values()),
+    }
