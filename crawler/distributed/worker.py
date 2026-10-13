@@ -151,10 +151,15 @@ async def _process_message(
             if wait_sec > 0:
                 _extend_visibility_if_needed(task_queue, message, wait_sec)
                 await asyncio.sleep(wait_sec)
-            # 待ち明けが遅れても間隔が縮まないよう、実際の開始時刻を基準に次回時刻を記録する
-            await rate_limiter.mark_started(domain, site.crawl_delay)
         task = URLTask(url=url, depth=message["depth"], discovered_from=message["discovered_from"])
-        attempt = await run_url_task(site, task, session)
+        try:
+            attempt = await run_url_task(site, task, session)
+        finally:
+            if rate_limiter is not None:
+                # 次回時刻を「取得の完了 + Crawl-delay」まで後ろ倒しする。開始時刻を基準にすると、
+                # 送信前の処理（名前解決・TLS・他の窓口との順番待ち）で送信が遅れたとき、サーバーに届く間隔が縮む
+                # （窓口16で最大0.7秒の遅れを観測、R10）。完了を基準にすれば届く間隔は必ず Crawl-delay 以上になる
+                await rate_limiter.mark_accessed(domain, site.crawl_delay)
         site_cache.note_task_processed(domain)
         await _forward_discovered_tasks(site, task_queue)
     except Exception as exc:  # noqa: BLE001
@@ -248,6 +253,9 @@ async def run_worker(*, max_concurrency: int | None = None) -> None:
     # 待機中の受信で枠が埋まり、Valkey の予約や DB 書き込みなど他の to_thread 処理が詰まるため専用にする
     receive_executor = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="sqs-receive")
     loop = asyncio.get_running_loop()
+    # 名前解決（httpx）・Valkey の予約・robots.txt の取得は共有のスレッドプールで動く。既定（CPU数+4）では
+    # 窓口が多いと順番待ちで送信が遅れるため、窓口数に合わせて増やす
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=max(32, max_concurrency * 3), thread_name_prefix="worker-io"))
     exit_status = "stopped"
     try:
         async with httpx.AsyncClient(

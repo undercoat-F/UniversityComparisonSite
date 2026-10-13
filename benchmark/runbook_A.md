@@ -112,7 +112,7 @@ bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
 ### 2-3. Mock を新しい run-label で起動し直す（Mock で）
 
 ```bash
-LABEL=A-distributed-x1-c8-run1     # 毎回変える
+LABEL=A-distributed-x1-c16-run1     # 毎回変える
 sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
 sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
   -m benchmark.mock.server --scenario benchmark/mock/scenarios/A_scaling.yaml --run-label $LABEL \

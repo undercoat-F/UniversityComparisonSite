@@ -144,7 +144,7 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         task_queue = MagicMock()
         site_cache = DomainSiteCache()
         rate_limiter = MagicMock()
-        rate_limiter.mark_started = AsyncMock()
+        rate_limiter.mark_accessed = AsyncMock()
         rate_limiter.reserve = AsyncMock(return_value=1.5)
         message = {
             "receipt_handle": "handle-1",
@@ -162,6 +162,11 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
         async def fake_sleep(seconds):
             events.append(("sleep", seconds))
 
+        async def fake_mark(domain, delay):
+            events.append(("mark", domain))
+
+        rate_limiter.mark_accessed = AsyncMock(side_effect=fake_mark)
+
         async def fake_run_url_task(site, task, session):
             events.append(("fetch", task.url))
             site.enqueue(url="https://example.edu/b", depth=1, discovered_from=task.url)
@@ -177,15 +182,16 @@ class TestProcessMessage(unittest.IsolatedAsyncioTestCase):
             )
 
         rate_limiter.reserve.assert_awaited_once_with("example.edu", 2.0)
-        rate_limiter.mark_started.assert_awaited_once_with("example.edu", 2.0)
-        self.assertEqual(events, [("sleep", 1.5), ("fetch", "https://example.edu/a")])
+        rate_limiter.mark_accessed.assert_awaited_once_with("example.edu", 2.0)
+        # 間隔は取得の完了を基準にする（R10）
+        self.assertEqual(events, [("sleep", 1.5), ("fetch", "https://example.edu/a"), ("mark", "example.edu")])
         _, kwargs = task_queue.send_task.call_args
         self.assertNotIn("delay_seconds", kwargs)
 
     async def test_extends_visibility_when_wait_would_outlive_it(self):
         task_queue = MagicMock()
         rate_limiter = MagicMock()
-        rate_limiter.mark_started = AsyncMock()
+        rate_limiter.mark_accessed = AsyncMock()
         rate_limiter.reserve = AsyncMock(return_value=100.0)
         message = {
             "receipt_handle": "handle-1",
