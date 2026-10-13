@@ -174,6 +174,10 @@ def compute_run_metrics(run: RunData) -> dict[str, Any]:
         "missing_urls": len(missing),
         "retried_urls": sum(len(rs) > 1 for rs in by_url.values()),
         "urls_per_sec": len(fetched) / total_time if total_time > 0 else None,
+        # 準備（robots.txt・sitemap の取得〜最初のページ取得まで）とクロールの時間。準備が長い場合は
+        # producer / Legacy の起点投入処理がボトルネック（例: キューログの1行ずつの DB 書き込み）
+        "seed_phase_sec": (min(r.recv_ts for r in pages) - start) if pages else None,
+        "crawl_phase_sec": (end - min(r.recv_ts for r in pages)) if pages else None,
         "requests_per_sec": len(pages) / total_time if total_time > 0 else None,
         "failed_urls": len(failed_urls),
         "url_error_rate": len(failed_urls) / len(fetched) if fetched else None,

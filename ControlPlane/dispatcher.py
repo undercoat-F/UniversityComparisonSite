@@ -167,9 +167,17 @@ async def enqueue_initial_tasks(targets: list[tuple[str, int]]) -> list[SiteStat
         failures_only=False,
     )
     run_id = queue_logger.create_run(root_seed_count=len(targets), notes="distributed crawl")
+    # QUEUE_LOG_ENABLED=0 のときは、実行の記録（crawl_runs の1行）だけを書き、URLごとのキューログは書かない。
+    # キューログは1行ごとに DB へ往復するため、sitemap の候補が多いと投入前に数分かかる（試験A で約300秒）。
+    # Legacy（run_dispatcher）・Worker と同じ設定でログを止められるようにする
+    log_queue_state = _env_flag("QUEUE_LOG_ENABLED", True)
+    if not log_queue_state:
+        print("[PRODUCER] queue state logging disabled: QUEUE_LOG_ENABLED is off (crawl run is still recorded)", flush=True)
     sites = build_site_states(targets, dedup_store=dedup_store)
     for site in sites:
         site.run_id = run_id
+        if not log_queue_state:
+            continue
         site.queue_logger = queue_logger
         for task in site.queue:
             queue_logger.upsert_queue_state(

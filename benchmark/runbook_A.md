@@ -112,7 +112,7 @@ bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
 ### 2-3. Mock を新しい run-label で起動し直す（Mock で）
 
 ```bash
-LABEL=A-distributed-x1-run1     # 毎回変える
+LABEL=A-distributed-x1-c8-run1     # 毎回変える
 sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
 sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
   -m benchmark.mock.server --scenario benchmark/mock/scenarios/A_scaling.yaml --run-label $LABEL \
@@ -197,3 +197,79 @@ python -m benchmark.analysis.report compare benchmark/results/A-legacy-* benchma
 - `A-compare.csv` を Google スプレッドシートに読み込んでグラフにする（横軸 `workers`、縦軸 `urls_per_sec`。Legacy は基準線）
 - `benchmark/results/` は git 管理外。README に載せる元データは `docs/` などに CSV をコピーしてコミットする
 - 片付け: `terraform.tfvars` の `worker_count` を 2 に戻して apply、Mock・Legacy は `benchmark_enabled` / `benchmark_legacy_enabled` を false にして apply（`terraform destroy` は使わない）
+
+---
+
+## 付録: 想定外の遅れの見つけ方（接続先との往復による遅延の例）
+
+2026-10-13、`A-distributed-x1-run1` の所要時間 1,611 秒のうち約 300 秒が、ページを1件も取得していない「準備」に使われていた。原因は producer が sitemap の候補（約 4,100 件）を1件ずつキューログとして Neon（シンガポール）に書き込んでいたこと（1行あたり約 78 ms の往復 × 約 4,100 行 ≒ 320 秒）。Legacy・Worker は `QUEUE_LOG_ENABLED=0` でログを止めていたが、producer だけがこの設定を見ていなかった（修正済み、R9）。
+
+### 1. 時間を「準備」と「クロール」に分ける
+
+```bash
+python -m benchmark.analysis.report run benchmark/results/$LABEL | grep "total time"
+# - total time: 1611.2 sec (seed phase 299.9 sec + crawl phase 1311.3 sec)
+```
+
+- seed phase: 最初のアクセス（robots.txt / sitemap）から最初のページ取得まで。producer（Legacy は起点の読み込み）の処理時間
+- 数秒が正常。数十秒以上なら producer 側を疑う（試験B では 0.1〜0.5 秒）
+
+### 2. 計測中に Mock のアクセスログで「何が来ているか」を見る（Mock で）
+
+```bash
+F=/var/lib/benchmark/results/$LABEL/access.jsonl
+wc -l < $F                                                      # 増えているか
+tail -3 $F | cut -c1-200                                        # 最後に来たリクエスト
+python3 -c "
+import json, collections
+rows = [json.loads(l) for l in open('$F')]
+print(collections.Counter('robots/sitemap' if r['path'] in ('/robots.txt', '/sitemap.xml') else 'page' for r in rows))
+"
+```
+
+robots.txt / sitemap.xml だけが来ていて page が 0 のまま → producer が起点の準備中（SQS への投入前）。
+
+### 3. producer の出力を見る（Control Plane）
+
+`bench run --rm controlplane` の出力で、各段階の間隔を見る。
+
+| 出力 | 意味 |
+|---|---|
+| `[PRODUCER] start targets=...` | 起点の読み込み完了 |
+| `[PRODUCER] seeding sitemap candidates ...` → `sitemap seeding done` | sitemap の取得。ここが長い |
+| `[QUEUE_LOG] flush ok events=200 ... elapsed_ms=... ms_per_row=...` | **キューログの書き込み。`ms_per_row` が数十 ms なら、1行ごとの DB 往復が遅れの原因** |
+| `[PRODUCER] queued initial_tasks=...` | SQS への投入完了 |
+
+計測時は `QUEUE_LOG_ENABLED=0` のため `[QUEUE_LOG] flush` は出ず、代わりに `queue state logging disabled` が出る。
+
+### 4. 接続先との往復時間（RTT）を測る（EC2 で）
+
+「回数 × 1回の往復時間」で見積もる。Neon は ap-southeast-1（シンガポール）、EC2 は ap-northeast-1（東京）にあり、1往復 70〜80 ms かかる。
+
+```bash
+# Control Plane / Worker（~/bench-app、alias bench 設定済み）: Neon への SELECT 1 を10回
+bench run --rm controlplane python -c "
+import os, time, psycopg2
+c = psycopg2.connect(os.environ['PARENT_DB_OWNER_CONNECTION']); cur = c.cursor()
+t = []
+for _ in range(10):
+    s = time.perf_counter(); cur.execute('SELECT 1'); cur.fetchone(); t.append((time.perf_counter() - s) * 1000)
+print('Neon RTT ms: min %.0f / median %.0f' % (min(t), sorted(t)[5]))
+"
+```
+
+| 接続先 | 目安（東京の EC2 から） |
+|---|---|
+| Neon（シンガポール） | 70〜80 ms |
+| Valkey・SQS・Mock（同じ VPC / リージョン） | 数 ms |
+
+1件ごとに Neon へ往復する処理が数千回あると、それだけで数分かかる。分散版の Worker の抽出結果の保存は、件数でまとめて書き込む（`[RECORD_DB] flushed records=... elapsed=...`）ため、この影響を受けにくい。
+
+### 5. よくある原因と確認先
+
+| 症状 | 疑う箇所 |
+|---|---|
+| seed phase が長い | producer のキューログ（`QUEUE_LOG_ENABLED`）、sitemap の取得、SQS への投入（1件ずつ送信） |
+| crawl phase が長く CPU も低い | Worker の窓口数（`WORKER_MAX_CONCURRENCY`）。各窓口は Crawl-delay の待ち中もメッセージを持つ |
+| crawl phase が長く CPU が高い | HTML の解析・抽出（t3.micro の CPU） |
+| Worker のログに `[RECORD_DB] flush` が長い（数秒以上） | Neon への書き込み（往復時間 × 件数） |

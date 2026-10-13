@@ -97,7 +97,8 @@ def render_run(m: dict[str, Any], delay_rows: list[dict[str, Any]]) -> str:
         f"# {m['label']}",
         "",
         f"- scenario: {m.get('scenario', '-')}",
-        f"- total time: {m['total_time_sec']:.1f} sec",
+        f"- total time: {m['total_time_sec']:.1f} sec (seed phase {_f(m.get('seed_phase_sec'), '{:.1f}')} sec"
+        f" + crawl phase {_f(m.get('crawl_phase_sec'), '{:.1f}')} sec)",
         f"- URLs: {m['urls']} / expected {m['expected_urls']} (coverage {_pct(m['coverage'])})",
         f"- throughput: {_f(m['urls_per_sec'])} URLs/sec ({_f(m['requests_per_sec'])} requests/sec)",
         f"- requests: pages {m['page_requests']}, robots {m['robots_requests']}, sitemap {m['sitemap_requests']}, "
@@ -204,6 +205,7 @@ def cmd_compare(args: argparse.Namespace) -> None:
             "urls": _median([m["urls"] for m in ms]),
             "coverage": _median([m["coverage"] for m in ms]),
             "total_time": _median([m["total_time_sec"] for m in ms]),
+            "seed_phase": _median([m.get("seed_phase_sec") for m in ms]),
             "urls_per_sec": _median([m["urls_per_sec"] for m in ms]),
             "p50": _median([m["server_latency_ms"]["p50"] for m in ms]),
             "p95": _median([m["server_latency_ms"]["p95"] for m in ms]),
@@ -233,7 +235,8 @@ def cmd_compare(args: argparse.Namespace) -> None:
         ])
         csv_rows.append({
             "architecture": config, "runs": a["runs"], "workers": a["workers"], "urls": a["urls"],
-            "coverage": a["coverage"], "total_time_sec": a["total_time"], "urls_per_sec": a["urls_per_sec"],
+            "coverage": a["coverage"], "total_time_sec": a["total_time"], "seed_phase_sec": a["seed_phase"],
+            "urls_per_sec": a["urls_per_sec"],
             "vs_baseline": ratio, "scale_efficiency": scale_eff, "server_p50_ms": a["p50"], "server_p95_ms": a["p95"],
             "url_error_rate": a["url_error_rate"], "unexpected_failures": a["unexpected"],
             "crawl_delay_violations": a["violations"], "cpu_avg_percent": a["cpu_avg"],
