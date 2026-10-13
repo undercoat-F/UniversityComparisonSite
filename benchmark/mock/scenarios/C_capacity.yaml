@@ -1,0 +1,53 @@
+# 試験C：Worker 1台の窓口数（WORKER_MAX_CONCURRENCY）の限界を調べる
+# 試験A（100 ドメイン）では窓口の合計が 100 に近づくとシナリオの上限（100 URLs/sec）で頭打ちになるため、
+# ドメイン数を 500 に増やして上限を 500 URLs/sec に上げ、窓口 32・64 でも CPU・メモリ側の限界を観察できるようにする。
+# 合計ページ数が試験A の約2倍に収まるよう、1ドメインのページ数は 20 に減らしている。
+# 内容確認: python -m benchmark.mock.inspect_scenario benchmark/mock/scenarios/C_capacity.yaml
+scenario: C-capacity
+seed: 42
+scheme: https
+domain_suffix: bench.internal
+
+total_domains: 500
+mix:
+  normal: 0.97
+  slow: 0.01
+  failure: 0.01
+  robots_error: 0.005
+  sitemap_error: 0.005
+
+profiles:
+  normal:
+    crawl_delay: 1
+    pages: 20                 # ルート "/" を除くページ数（試験A は 50）
+    links_per_page: 5
+    extra_links: 2
+    sitemap_ratio: 0.8
+    paragraphs: 4
+    responses: {fast: 1.0}
+  slow:
+    inherit: normal
+    responses: {fast: 0.5, slow: 0.4, very_slow: 0.1}
+  failure:
+    inherit: normal
+    responses: {fast: 0.85, error_500: 0.1, timeout: 0.05}   # タイムアウトは1ドメイン1ページ（約60秒かかるため）
+  robots_error:
+    inherit: normal
+    robots: error_404
+  sitemap_error:
+    inherit: normal
+    sitemap: error_404
+
+response_types:
+  ok:        {status: 200, delay_ms: 0}
+  fast:      {status: 200, delay_ms: 10}
+  slow:      {status: 200, delay_ms: 500}
+  very_slow: {status: 200, delay_ms: 2000}
+  error_404: {status: 404, delay_ms: 0}
+  error_500: {status: 500, delay_ms: 0}
+  timeout:   {status: none, delay_ms: 60000}
+
+checks:
+  crawler_max_depth: 5
+  client_timeout_sec: 30
+  min_theoretical_throughput: 200
