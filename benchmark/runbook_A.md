@@ -99,14 +99,14 @@ cd ~/bench-app && bench stop worker
 ```bash
 # 手元
 python -m benchmark.neon_branch reset
-python -m benchmark.reset_state --pages benchmark/results/A-inspect/pages.csv --skip-valkey --execute
+python -m benchmark.reset_state --pages benchmark/results/C-inspect/pages.csv --skip-valkey --execute
 ```
 
 ```bash
 # Control Plane
 cd ~/bench-app
 bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
-  python -m benchmark.reset_state --pages /app/benchmark/results/A-inspect/pages.csv --skip-sqs --execute
+  python -m benchmark.reset_state --pages /app/benchmark/results/C-inspect/pages.csv --skip-sqs --execute
 ```
 
 ### 2-3. Mock を新しい run-label で起動し直す（Mock で）
@@ -115,10 +115,24 @@ bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
 LABEL=A-distributed-x1-c16-run1     # 毎回変える
 sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
 sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
-  -m benchmark.mock.server --scenario benchmark/mock/scenarios/A_scaling.yaml --run-label $LABEL \
+  -m benchmark.mock.server --scenario benchmark/mock/scenarios/C_capacity.yaml --run-label $LABEL \
   --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
-systemctl is-active bench-mock
+systemctl is-active bench-mock                                  # active であること
+sudo journalctl -u bench-mock -n 2 --no-pager | tail -1         # [MOCK] scenario=... domains=... log=.../$LABEL/... であること
 ```
+Cシナリオbash
+'''
+LABEL=C-distributed-x1-c64-run1
+sudo systemctl stop bench-mock;sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
+sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
+  -m benchmark.mock.server --scenario benchmark/mock/scenarios/C_capacity.yaml --run-label $LABEL \
+  --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
+systemctl is-active bench-mock         # active であること
+sudo journalctl -u bench-mock -n 2 --no-pager | tail -1    # "[MOCK] scenario=C-capacity domains=500" と出ること
+'''
+
+
+**必ず上の2行で起動を確認してから先に進む。** `systemd-run` は起動に失敗しても画面にエラーを出さない（ファイル名の間違いや、既に使った run-label だと起動直後に止まる）。Mock が止まったまま producer を実行すると、起点の取得がすべて失敗し、Valkey の重複排除キーが残るため、片付け（2-1・2-2）からやり直しになる（2026-10-13 に発生）。
 
 ### 2-4. 使う N 台の Worker を起動する（Worker 1〜N で）
 
@@ -180,9 +194,9 @@ LABEL=A-legacy-x1-run1
    終わると自動で終了する（`Stage 3/3 complete` まで出ること）
 5. 手元:
    ```bash
-   scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/$LABEL benchmark/results/
-   python -m benchmark.collect_resources --key ~/UniversityComparisonKey.pem --run-dir benchmark/results/$LABEL --role legacy
-   python -m benchmark.analysis.report run benchmark/results/$LABEL
+scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/$LABEL benchmark/results/
+python -m benchmark.collect_resources --key ~/UniversityComparisonKey.pem --run-dir benchmark/results/$LABEL --role legacy
+python -m benchmark.analysis.report run benchmark/results/$LABEL
    ```
 
 ---
@@ -197,6 +211,43 @@ python -m benchmark.analysis.report compare benchmark/results/A-legacy-* benchma
 - `A-compare.csv` を Google スプレッドシートに読み込んでグラフにする（横軸 `workers`、縦軸 `urls_per_sec`。Legacy は基準線）
 - `benchmark/results/` は git 管理外。README に載せる元データは `docs/` などに CSV をコピーしてコミットする
 - 片付け: `terraform.tfvars` の `worker_count` を 2 に戻して apply、Mock・Legacy は `benchmark_enabled` / `benchmark_legacy_enabled` を false にして apply（`terraform destroy` は使わない）
+
+---
+
+## 5. 試験C（Worker 1台の限界 → 台数を増やす）
+
+試験A（100 ドメイン）は窓口の合計が 100 に近づくとシナリオの上限（100 URLs/sec）で頭打ちになるため、1台の限界は試験C（`benchmark/mock/scenarios/C_capacity.yaml`: 500 ドメイン × 21 ページ = 10,500 ページ、上限 500 URLs/sec）で測る。
+
+| 段階 | run-label | 内容 |
+|---|---|---|
+| ① 1台の限界 | `C-distributed-x1-c16-run1`, `-c32-`, `-c64-`（伸びれば `-c128-`） | Worker 1台で窓口数を変える |
+| ② 台数を増やす | `C-distributed-x2-c<N>-run1`, `-x3-`, `-x4-` | ①で決めた窓口数 N で台数を変える |
+| ③ 基準線 | `C-legacy-x1-run1` | Legacy |
+
+試験A との違い（それ以外は 2・3 章と同じ）:
+
+- seed は bench-base に C の 500 件を登録済み（`prepare_seeds --seed-urls benchmark/results/C-inspect/seed_urls.txt`）。片付けは `benchmark/results/C-inspect/pages.csv` を使う（Control Plane にも送付済み）
+- Mock の起動: `--scenario benchmark/mock/scenarios/C_capacity.yaml`
+- 窓口数は各 Worker の `~/bench-app/.env` の `WORKER_MAX_CONCURRENCY` で変え、`bench up -d --build worker` で起動し直す。ログの `max_concurrency=` で確認する
+
+```bash
+# 手元から全 Worker の窓口数をそろえる（N を変える）
+N=32
+for ip in <Worker の IP ...>; do
+  ssh -i ~/UniversityComparisonKey.pem ubuntu@$ip "cd ~/bench-app && (grep -q '^WORKER_MAX_CONCURRENCY=' .env && sed -i 's/^WORKER_MAX_CONCURRENCY=.*/WORKER_MAX_CONCURRENCY=$N/' .env || echo 'WORKER_MAX_CONCURRENCY=$N' >> .env) && grep '^WORKER_MAX_CONCURRENCY=' .env"
+done
+```
+
+①で見るもの（`report run` の出力）:
+
+| 指標 | 限界の目安 |
+|---|---|
+| Throughput | 窓口を倍にしても 1.5 倍未満しか伸びない |
+| CPU avg / max | 平均 70〜80% 以上（t3.micro、2 vCPU） |
+| RSS max | 1GB に近づく |
+| Crawl-delay violations / unexpected failures | 増え始める（処理が詰まっている） |
+| mock overhead p95 | 数十 ms 以上なら Mock（t3.medium）側の限界を疑う |
+
 
 ---
 
@@ -273,3 +324,94 @@ print('Neon RTT ms: min %.0f / median %.0f' % (min(t), sorted(t)[5]))
 | crawl phase が長く CPU も低い | Worker の窓口数（`WORKER_MAX_CONCURRENCY`）。各窓口は Crawl-delay の待ち中もメッセージを持つ |
 | crawl phase が長く CPU が高い | HTML の解析・抽出（t3.micro の CPU） |
 | Worker のログに `[RECORD_DB] flush` が長い（数秒以上） | Neon への書き込み（往復時間 × 件数） |
+
+---
+
+## 付録2: 頭打ちの原因が「Python のプロセス1つ（イベントループ）」だと分かった理由
+
+2026-10-14、試験C で Worker 1台の窓口数を 16 → 32 → 64 と増やしたところ、Throughput が 32 で頭打ちになった（R11）。EC2 全体の CPU は約 30% と余裕があるように見えたが、原因はマシンではなく Python のプロセス1つの限界だった。以下の順に、他の候補を消していって特定した。
+
+| 窓口 | Throughput | 窓口1つあたり | プロセスの CPU（1コア=100%）平均 / 最大 | EC2 全体の CPU 平均 | RSS 最大 | 違反 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 14.44 | 0.90 | 40% / 67% | 21% | 102 MB | 0 |
+| 32 | 20.04 | 0.63 | 59% / 78% | 31% | 124 MB | 0 |
+| 64 | 19.14 | 0.30 | 58% / 72% | 30% | 124 MB | 0 |
+
+### 1. 「窓口1つあたり」の性能で、頭打ちを見つける
+
+各窓口は「1ドメインを担当し、Crawl-delay（1秒）ごとに1件取得する」ため、窓口1つあたりの上限は 1 件/秒。
+
+- 窓口16: 0.90 件/秒（上限に近い。窓口数に比例して伸びている）
+- 窓口32: 0.63、窓口64: 0.30 件/秒（窓口を増やした分だけ、1つあたりが下がっている）
+
+窓口を増やしても全体が約 20 URLs/秒で変わらない = 窓口の外にある「共有の何か」が詰まっている。
+
+### 2. 共有の候補を1つずつ消す
+
+| 候補 | 確認した値 | 判断 |
+|---|---|---|
+| シナリオの上限 | 理論上限 500 URLs/sec（`inspect_scenario` の theoretical max） | 20 は遠く及ばない。違う |
+| Mock（t3.medium） | mock overhead p95 = 2.8〜3.5 ms | Mock は余裕がある。違う |
+| メモリ | RSS 最大 124 MB（t3.micro は 1 GB） | 余裕がある。違う |
+| Crawl-delay の待ち・失敗の再取得 | 違反 0、想定外の失敗 0、エラーはシナリオの失敗ページ分だけ | 違う |
+| producer の準備 | seed phase 20〜30 秒（crawl phase は約 500 秒） | 主因ではない |
+| EC2 全体の CPU | 平均 30% | 一見余裕がある → 3 で詳しく見る |
+
+### 3. 「EC2 全体の CPU」と「プロセスの CPU」を分けて見る
+
+CPU の記録（`resources/*.csv`）には2種類の値がある。
+
+| 列 | 100% の意味 |
+|---|---|
+| `system_cpu_percent` | EC2 の全コア（t3.micro は 2 vCPU）がすべて使用中 |
+| `process_cpu_percent` | クローラーのプロセスが **1コア分**を使い切っている |
+
+- Python のプロセスは、GIL（同時に1スレッドしか Python のコードを実行できない仕組み）があるため、基本的に1コアしか使えない。Worker はすべての窓口を1つのイベントループ（1スレッド）で動かしている
+- プロセスの CPU は 1コアの 60〜80%（最大 78%）。EC2 全体の 30% は「2コアのうち、1コアの6割」とほぼ同じで、**2つ目のコアはほとんど使われていない**
+- つまり「CPU に余裕がある」のは EC2 全体の話で、クローラーのプロセスから見ると、自分が使える1コアはほぼ埋まっている
+
+計測期間中のプロセスの CPU は次のように確認できる（手元）。
+
+```bash
+python - <<'EOF'
+import csv, json
+from datetime import datetime, timezone
+L = "C-distributed-x1-c32-run1"
+s = json.load(open(f"benchmark/results/{L}/summary.json", encoding="utf-8"))
+t0, t1 = (datetime.fromtimestamp(s[k], tz=timezone.utc).replace(tzinfo=None) for k in ("start_ts", "end_ts"))
+rows = [r for r in csv.DictReader(open(f"benchmark/results/{L}/resources/UniversityComparison-worker-1.csv", encoding="utf-8"))
+        if t0 <= datetime.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S") <= t1]
+p = [float(r["process_cpu_percent"]) for r in rows]
+print(f"process CPU (1 core = 100%): avg {sum(p)/len(p):.0f}% max {max(p):.0f}%")
+EOF
+```
+
+`report run` の `resources: CPU avg ...` は EC2 全体（`system_cpu_percent`）の値なので、1プロセスの限界を見るときは上のように `process_cpu_percent` を見る。
+
+### 4. CPU に表れない「待ち」も、イベントループを止めている
+
+プロセスの CPU が 100% に届かなくても頭打ちになるのは、イベントループを止める同期呼び出しがあるため。
+
+- `crawler/distributed/worker.py` の SQS のメッセージ削除（`task_queue.delete_task(...)`）と、見つけたリンクの送信（`_forward_discovered_tasks` 内の `task_queue.send_task(...)`）は、boto3（同期処理）を `await` せずに直接呼んでいる
+- この呼び出しが SQS の応答を待つ間（数〜数十 ms）、イベントループは止まり、他の全窓口も待たされる。待っている間は CPU を使わないため、CPU 使用率には表れない
+- 窓口が増えるほど1秒あたりの呼び出し回数が増え、「CPU 処理（HTML の解析・抽出）＋同期呼び出しの待ち」でイベントループの時間がほぼ埋まる
+
+（受信 `receive_tasks` は R7 で専用スレッドに移しているため、イベントループを止めない）
+
+### 5. 結論と、確かめるための実験
+
+- 頭打ちは「EC2 1台」ではなく「Python のプロセス1つ（1つのイベントループ）」の限界（約 20 URLs/sec）
+- CPU 処理と同期呼び出しの待ちの割合はまだ測っていない。次の実験で確かめる
+
+| 実験 | 結果がこうなら | 分かること |
+|---|---|---|
+| 同じ EC2 で Worker を2プロセスにする（`bench up -d --scale worker=2 worker`） | 約 2 倍（約 40 URLs/sec）になる | 限界はプロセス単位。コアの数だけプロセスを並べれば伸びる |
+| 同上 | ほとんど伸びない | EC2 全体（CPU クレジット・ネットワーク等）の別の限界 |
+| SQS の削除・送信を別スレッドで行うように直す | 1プロセスの頭打ちが上がる | 同期呼び出しの待ちが効いていた |
+
+### 6. 同じ種類の問題を見つけるときの手順
+
+1. 並列数（窓口・プロセス・台数）を変えて、**1つあたり**の性能を見る。1つあたりが下がり始めたら、共有の何かが詰まっている
+2. 共有の候補（シナリオの上限・Mock・DB・メモリ・CPU）を、値を見て1つずつ消す
+3. CPU は「マシン全体」と「プロセス単位」を分けて見る。Python は1プロセス1コアが基本
+4. CPU に表れない待ち（同期 I/O、DB・外部 API への往復）がイベントループの中にないか、コードで確認する
