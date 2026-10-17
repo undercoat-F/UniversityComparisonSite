@@ -2,10 +2,11 @@
 
 Legacy と分散版の Worker は、実行中の CPU・メモリを 5 秒ごとに log/etl_resource_log_<時刻>.csv に記録している
 （ControlPlane/resource_recorder.py、Legacy は ETL/resource_recorder.py）。
-各インスタンスで最も新しいファイルを <run-dir>/resources/<インスタンス名>.csv として保存し、
+各インスタンスの新しい順に --files 個（既定 4）を <run-dir>/resources/<インスタンス名>__<ファイル名>.csv として保存し、
 benchmark.analysis.report が CPU avg / RSS max として集計する。
 
-Worker は計測ごとにコンテナを起動し直す（手順書）ため、最も新しいファイルがその計測の記録になる。
+1台で複数プロセス（`bench up -d --scale worker=2 worker`）を動かすと、プロセスごとに1ファイルできる
+（ファイル名にコンテナの hostname が付く）。前回以前の計測のファイルが混ざっても、集計時に計測期間外として除外される。
 
 使い方（手元の PC、リポジトリのルートで実行）:
   python -m benchmark.collect_resources --key ~/UniversityComparisonKey.pem --run-dir benchmark/results/A-distributed-x2-run1 --role worker
@@ -31,6 +32,8 @@ def main() -> None:
     parser.add_argument("--run-dir", required=True, help="benchmark/results/<run-label>")
     parser.add_argument("--role", required=True, choices=["worker", "legacy"])
     parser.add_argument("--region", default="ap-northeast-1")
+    parser.add_argument("--files", type=int, default=4,
+                        help="newest resource logs to collect per instance (>= processes per instance)")
     args = parser.parse_args()
 
     key = str(Path(args.key).expanduser())
@@ -45,22 +48,23 @@ def main() -> None:
             continue
         host = f"{SSH_USER}@{instance['public_ip']}"
         found = subprocess.run(
-            ["ssh", *ssh_base(key), host, f"ls -t {REMOTE_GLOB} 2>/dev/null | head -1"],
+            ["ssh", *ssh_base(key), host, f"ls -t {REMOTE_GLOB} 2>/dev/null | head -{args.files}"],
             capture_output=True, text=True,
         )
-        remote = found.stdout.strip()
-        if not remote:
+        remotes = found.stdout.split()
+        if not remotes:
             print(f"skip: {instance['name']} — no resource log found")
             continue
-        dest = out / f"{instance['name']}.csv"
-        copied = subprocess.run(["scp", *ssh_base(key), f"{host}:{remote}", os.path.relpath(dest)],
-                                capture_output=True, text=True)
-        if copied.returncode != 0:
-            print(f"failed: {instance['name']}: {copied.stderr.strip()}")
-            continue
-        rows = sum(1 for _ in dest.open(encoding="utf-8")) - 1
-        print(f"collected: {instance['name']} {remote} -> {dest} ({rows} samples)")
-        collected += 1
+        for remote in remotes:
+            dest = out / f"{instance['name']}__{Path(remote).name}"
+            copied = subprocess.run(["scp", *ssh_base(key), f"{host}:{remote}", os.path.relpath(dest)],
+                                    capture_output=True, text=True)
+            if copied.returncode != 0:
+                print(f"failed: {instance['name']}: {copied.stderr.strip()}")
+                continue
+            rows = sum(1 for _ in dest.open(encoding="utf-8")) - 1
+            print(f"collected: {instance['name']} {remote} -> {dest} ({rows} samples)")
+            collected += 1
     if not collected:
         sys.exit("no resource logs were collected")
 

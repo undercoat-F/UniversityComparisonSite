@@ -178,6 +178,9 @@ def compute_run_metrics(run: RunData) -> dict[str, Any]:
         # producer / Legacy の起点投入処理がボトルネック（例: キューログの1行ずつの DB 書き込み）
         "seed_phase_sec": (min(r.recv_ts for r in pages) - start) if pages else None,
         "crawl_phase_sec": (end - min(r.recv_ts for r in pages)) if pages else None,
+        # 準備の時間は Worker の台数を増やしても縮まないため、台数によるスケールはクロールの時間だけでも見る
+        "crawl_urls_per_sec": (len(fetched) / (end - min(r.recv_ts for r in pages))
+                               if pages and end > min(r.recv_ts for r in pages) else None),
         "requests_per_sec": len(pages) / total_time if total_time > 0 else None,
         "failed_urls": len(failed_urls),
         "url_error_rate": len(failed_urls) / len(fetched) if fetched else None,
@@ -273,10 +276,13 @@ def compute_resource_usage(run_dir: str | Path, start_ts: Optional[float], end_t
         if not rows:
             continue
         cpu = [float(r["system_cpu_percent"]) for r in rows]
+        proc_cpu = [float(r["process_cpu_percent"]) for r in rows]
         hosts[path.stem] = {
             "samples": len(rows),
             "cpu_avg_percent": sum(cpu) / len(cpu),
             "cpu_max_percent": max(cpu),
+            "process_cpu_avg_percent": sum(proc_cpu) / len(proc_cpu),
+            "process_cpu_max_percent": max(proc_cpu),
             "rss_max_mb": max(float(r["process_rss_mb"]) for r in rows),
             "memory_max_percent": max(float(r["system_memory_percent"]) for r in rows),
         }
@@ -287,4 +293,7 @@ def compute_resource_usage(run_dir: str | Path, start_ts: Optional[float], end_t
         "cpu_avg_percent": sum(h["cpu_avg_percent"] for h in hosts.values()) / len(hosts),
         "cpu_max_percent": max(h["cpu_max_percent"] for h in hosts.values()),
         "rss_max_mb": max(h["rss_max_mb"] for h in hosts.values()),
+        # プロセスの CPU（1コア=100%）。1台で複数プロセスのときはファイル（プロセス）ごとの平均の平均
+        "process_cpu_avg_percent": sum(h["process_cpu_avg_percent"] for h in hosts.values()) / len(hosts),
+        "process_cpu_max_percent": max(h["process_cpu_max_percent"] for h in hosts.values()),
     }

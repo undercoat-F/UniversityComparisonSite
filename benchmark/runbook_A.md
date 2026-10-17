@@ -1,18 +1,24 @@
 # 試験A（スケーリング）手順書
 
-目的: 100 ドメイン（5,100 ページ、Crawl-delay 1 秒、理論上限 100 URLs/sec）で、Legacy と分散版 1〜4 台を同一条件で計測し、台数による Throughput の変化をグラフにする。
+目的: 1,000 ドメイン（31,000 ページ、Crawl-delay 1 秒、理論上限 1,000 URLs/sec）で、Legacy と分散版 1〜4 台を同一条件で計測し、台数による Throughput の変化をグラフにする。
 
-| run-label | 構成 | 見込み時間 |
-|---|---|---|
-| `A-legacy-x1-run1` | Legacy | 数分 |
-| `A-distributed-x1-run1` | 分散版 Worker 1台 | 20 分前後 |
-| `A-distributed-x2-run1` | 分散版 Worker 2台 | |
-| `A-distributed-x3-run1` | 分散版 Worker 3台 | |
-| `A-distributed-x4-run1` | 分散版 Worker 4台 | |
+試験C（5章）で、Worker 1プロセスは窓口32で約 20 URLs/sec が限界、EC2（t3.micro、2 vCPU）の2つ目のコアはほぼ空いていると分かった。そこで試験A は **1台あたり2プロセス（`--scale worker=2`）× 窓口32** で台数を増やす（2026-10-17 にシナリオを 100 ドメインから 1,000 ドメインに変更。旧版は窓口の合計が 100 を超える x2 以降でシナリオの上限に当たるため）。
+
+| run-label | 構成 | 窓口の合計 | 見込み Throughput | 見込み時間 |
+|---|---|---:|---:|---|
+| `A-legacy-x1-run1` | Legacy | - | - | 未知（試験B では分散版1台と同程度） |
+| `A-distributed-x1-p2-c32-run1` | Worker 1台 × 2プロセス | 64 | 約 40 | 約 13 分 |
+| `A-distributed-x2-p2-c32-run1` | Worker 2台 × 2プロセス | 128 | 約 80 | 約 7 分 |
+| `A-distributed-x3-p2-c32-run1` | Worker 3台 × 2プロセス | 192 | 約 120 | 約 5 分 |
+| `A-distributed-x4-p2-c32-run1` | Worker 4台 × 2プロセス | 256 | 約 160 | 約 4 分 |
+
+- 最初の x1-p2 が「2プロセスで約2倍」という予想の確認を兼ねる。試験C の1プロセス（20.04 URLs/sec）の 1.6 倍（約 32）を大きく下回るなら、先に進まず原因を調べる
+- 準備（seed phase: 1,000 ドメインの robots.txt・sitemap の取得と SQS への投入）は台数を増やしても縮まないため、`report` の `crawl phase only` / `Crawl URLs/sec`（クロールの時間だけで割った値）も記録する
 
 - 時間に余裕があれば、各構成の 2・3 回目（`-run2`, `-run3`）を取る。集計は自動で中央値にまとめる
 - コマンドはすべて **Git Bash** で実行する（PowerShell はパイプで文字化けする）
-- シナリオ: `benchmark/mock/scenarios/A_scaling.yaml`（100 ドメイン。失敗ドメインのタイムアウトは1ページ）。seed は bench-base に登録済み
+- 手元の `python` はプロジェクトの `.venv` のものを使う（`source .venv/Scripts/activate`）。システムの Python には `dotenv` がなく、`NEON_API_KEY is not set` などで止まる
+- シナリオ: `benchmark/mock/scenarios/A_scaling.yaml`（1,000 ドメイン × 31 ページ）。seed（1,000 件）は bench-base に登録済み（2026-10-17、`prepare_seeds --seed-urls benchmark/results/A-inspect/seed_urls.txt`）。Mock（`~/bench-mock`）と Control Plane（`~/bench-app/benchmark/results/A-inspect`）にも配置済み。旧版（100 ドメイン）の一覧は `A-inspect-v1-100domains`
 
 ---
 
@@ -53,6 +59,8 @@ python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem --check
 
 ### 1-3. コードを最新にする（Control Plane と全 Worker で）
 
+1台で複数プロセスのときにリソースの記録が重ならない修正（ファイル名にコンテナの hostname を付ける）が入ったコードを使う。手元で commit・push してから:
+
 ```bash
 cd ~/bench-app && git pull && git log --oneline -1
 ```
@@ -73,6 +81,10 @@ ssh -i ~/UniversityComparisonKey.pem ubuntu@35.73.202.127 "mkdir -p ~/bench-app/
 scp -i ~/UniversityComparisonKey.pem -r benchmark/results/A-inspect ubuntu@35.73.202.127:~/bench-app/benchmark/results/
 ```
 
+### 1-6. 全 Worker の窓口数を 32 にする（手元）
+
+5章の「全 Worker の窓口数をそろえる」を `N=32` で実行する（2026-10-17 に設定済み）。
+
 ### 便利な定義（各マシンで、ターミナルを開くたびに）
 
 ```bash
@@ -84,7 +96,7 @@ alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compos
 
 ## 2. 毎回の手順（分散版 N 台）
 
-`LABEL=A-distributed-x<N>-run1` として進める。
+`LABEL=A-distributed-x<N>-p2-c32-run1` として進める。
 
 ### 2-1. 全 Worker の計測用コンテナを止める（全 Worker で）
 
@@ -99,37 +111,27 @@ cd ~/bench-app && bench stop worker
 ```bash
 # 手元
 python -m benchmark.neon_branch reset
-python -m benchmark.reset_state --pages benchmark/results/C-inspect/pages.csv --skip-valkey --execute
+python -m benchmark.reset_state --pages benchmark/results/A-inspect/pages.csv --skip-valkey --execute
 ```
 
 ```bash
 # Control Plane
 cd ~/bench-app
 bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
-  python -m benchmark.reset_state --pages /app/benchmark/results/C-inspect/pages.csv --skip-sqs --execute
+  python -m benchmark.reset_state --pages /app/benchmark/results/A-inspect/pages.csv --skip-sqs --execute
 ```
 
 ### 2-3. Mock を新しい run-label で起動し直す（Mock で）
 
 ```bash
-LABEL=A-distributed-x1-c16-run1     # 毎回変える
+LABEL=A-distributed-x1-p2-c32-run1     # 毎回変える
 sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
 sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
-  -m benchmark.mock.server --scenario benchmark/mock/scenarios/C_capacity.yaml --run-label $LABEL \
+  -m benchmark.mock.server --scenario benchmark/mock/scenarios/A_scaling.yaml --run-label $LABEL \
   --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
 systemctl is-active bench-mock                                  # active であること
-sudo journalctl -u bench-mock -n 2 --no-pager | tail -1         # [MOCK] scenario=... domains=... log=.../$LABEL/... であること
+sudo journalctl -u bench-mock -n 2 --no-pager | tail -1         # "[MOCK] scenario=A-scaling domains=1000 ... log=.../$LABEL/..." と出ること
 ```
-Cシナリオbash
-'''
-LABEL=C-distributed-x1-c64-run1
-sudo systemctl stop bench-mock;sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
-sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
-  -m benchmark.mock.server --scenario benchmark/mock/scenarios/C_capacity.yaml --run-label $LABEL \
-  --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
-systemctl is-active bench-mock         # active であること
-sudo journalctl -u bench-mock -n 2 --no-pager | tail -1    # "[MOCK] scenario=C-capacity domains=500" と出ること
-'''
 
 
 **必ず上の2行で起動を確認してから先に進む。** `systemd-run` は起動に失敗しても画面にエラーを出さない（ファイル名の間違いや、既に使った run-label だと起動直後に止まる）。Mock が止まったまま producer を実行すると、起点の取得がすべて失敗し、Valkey の重複排除キーが残るため、片付け（2-1・2-2）からやり直しになる（2026-10-13 に発生）。
@@ -137,8 +139,9 @@ sudo journalctl -u bench-mock -n 2 --no-pager | tail -1    # "[MOCK] scenario=C-
 ### 2-4. 使う N 台の Worker を起動する（Worker 1〜N で）
 
 ```bash
-cd ~/bench-app && bench up -d --build worker
-bench logs worker | tail -3      # start ... max_concurrency=4 / waiting for messages...
+cd ~/bench-app && bench up -d --build --scale worker=2 worker
+bench ps worker                                # bench-worker-1 と bench-worker-2 の2つが Up であること
+bench logs worker | grep "start worker_id"     # 2行（プロセスごと）、どちらも max_concurrency=32 であること
 ```
 
 使わない Worker（N+1 台目以降）は 2-1 で止めたままにする。
@@ -146,7 +149,7 @@ bench logs worker | tail -3      # start ... max_concurrency=4 / waiting for mes
 ### 2-5. producer を実行する（Control Plane で）
 
 ```bash
-cd ~/bench-app && bench run --rm --build controlplane     # targets=100 になること
+cd ~/bench-app && bench run --rm --build controlplane     # targets=1000 になること
 ```
 
 ### 2-6. 完了を待つ（手元）
@@ -161,7 +164,7 @@ Mock へのアクセスが 90 秒止まり、SQS が空になったら終わる�
 
 ```bash
 # Worker 1〜N で
-cd ~/bench-app && bench stop worker && bench logs worker | grep "RECORD_DB\] closed"    # dropped=0 であること
+cd ~/bench-app && bench stop worker && bench logs worker | grep "RECORD_DB\] closed"    # 2行（プロセスごと）、どちらも dropped=0 であること
 ```
 
 ```bash
@@ -171,7 +174,7 @@ python -m benchmark.collect_resources --key ~/UniversityComparisonKey.pem --run-
 python -m benchmark.analysis.report run benchmark/results/$LABEL
 ```
 
-`collect_resources` は起動中の全 Worker から最新の記録を集める。その計測で使っていない Worker の記録は、計測期間外のため集計時に自動で除外される。
+`collect_resources` は起動中の全 Worker から新しい順に4つまで（`--files`）の記録を集める（1プロセス1ファイル、`resources/<インスタンス名>__<ファイル名>.csv`）。前回以前の計測や、その計測で使っていない Worker の記録は、計測期間外のため集計時に自動で除外される。`report run` の `resources:` 行の `N processes` が「台数 × 2」になっていることを確認する。
 
 確認ポイント: coverage 100%、unexpected failures 0、Crawl-delay violations 0。
 
@@ -208,7 +211,7 @@ python -m benchmark.analysis.report compare benchmark/results/A-legacy-* benchma
   --out benchmark/results/A-compare.md --csv benchmark/results/A-compare.csv
 ```
 
-- `A-compare.csv` を Google スプレッドシートに読み込んでグラフにする（横軸 `workers`、縦軸 `urls_per_sec`。Legacy は基準線）
+- `A-compare.csv` を Google スプレッドシートに読み込んでグラフにする（横軸 `workers`、縦軸 `urls_per_sec` と `crawl_urls_per_sec`。Legacy は基準線）。`workers` は Mock から見た IP の数（= EC2 の台数）で、プロセス数ではない
 - `benchmark/results/` は git 管理外。README に載せる元データは `docs/` などに CSV をコピーしてコミットする
 - 片付け: `terraform.tfvars` の `worker_count` を 2 に戻して apply、Mock・Legacy は `benchmark_enabled` / `benchmark_legacy_enabled` を false にして apply（`terraform destroy` は使わない）
 
@@ -226,9 +229,18 @@ python -m benchmark.analysis.report compare benchmark/results/A-legacy-* benchma
 
 試験A との違い（それ以外は 2・3 章と同じ）:
 
-- seed は bench-base に C の 500 件を登録済み（`prepare_seeds --seed-urls benchmark/results/C-inspect/seed_urls.txt`）。片付けは `benchmark/results/C-inspect/pages.csv` を使う（Control Plane にも送付済み）
+- seed は C の 500 件を登録し直す（`prepare_seeds --seed-urls benchmark/results/C-inspect/seed_urls.txt`。2026-10-17 以降の bench-base は試験A の 1,000 件）。片付けは `benchmark/results/C-inspect/pages.csv` を使う（Control Plane にも送付済み）
 - Mock の起動: `--scenario benchmark/mock/scenarios/C_capacity.yaml`
 - 窓口数は各 Worker の `~/bench-app/.env` の `WORKER_MAX_CONCURRENCY` で変え、`bench up -d --build worker` で起動し直す。ログの `max_concurrency=` で確認する
+- Mock の起動例:
+
+```bash
+LABEL=C-distributed-x1-c32-run1
+sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
+sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python"   -m benchmark.mock.server --scenario benchmark/mock/scenarios/C_capacity.yaml --run-label $LABEL   --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
+systemctl is-active bench-mock                                  # active であること
+sudo journalctl -u bench-mock -n 2 --no-pager | tail -1         # "[MOCK] scenario=C-capacity domains=500" と出ること
+```
 
 ```bash
 # 手元から全 Worker の窓口数をそろえる（N を変える）
@@ -386,7 +398,7 @@ print(f"process CPU (1 core = 100%): avg {sum(p)/len(p):.0f}% max {max(p):.0f}%"
 EOF
 ```
 
-`report run` の `resources: CPU avg ...` は EC2 全体（`system_cpu_percent`）の値なので、1プロセスの限界を見るときは上のように `process_cpu_percent` を見る。
+`report run` の `resources: CPU avg ...` は EC2 全体（`system_cpu_percent`）の値。2026-10-17 から同じ行に `process CPU (1 core=100%) avg / max`（`process_cpu_percent`）も出るので、1プロセスの限界はそちらで見られる（例: c32 は avg 58% / max 78%）。
 
 ### 4. CPU に表れない「待ち」も、イベントループを止めている
 

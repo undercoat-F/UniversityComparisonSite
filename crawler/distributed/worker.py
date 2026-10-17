@@ -282,6 +282,7 @@ async def run_worker(*, max_concurrency: int | None = None) -> None:
                             datetime.now().strftime("%Y%m%d_%H%M%S"),
                             run_id=message["run_id"],
                             worker_id=worker_id,
+                            file_suffix=socket.gethostname(),
                         )
                     await _process_message(
                         message,
