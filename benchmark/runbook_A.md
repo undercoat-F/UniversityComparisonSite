@@ -122,9 +122,10 @@ bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
 ```
 
 ### 2-3. Mock を新しい run-label で起動し直す（Mock で）
+　　この際、手元でLABELを設定しなおすこと
 
 ```bash
-LABEL=A-distributed-x1-p2-c32-run1     # 毎回変える
+LABEL=A-distributed-x3-p2-c32-run1     # 毎回変える
 sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
 sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
   -m benchmark.mock.server --scenario benchmark/mock/scenarios/A_scaling.yaml --run-label $LABEL \
@@ -144,7 +145,8 @@ bench ps worker                                # bench-worker-1 と bench-worker
 bench logs worker | grep "start worker_id"     # 2行（プロセスごと）、どちらも max_concurrency=32 であること
 ```
 
-使わない Worker（N+1 台目以降）は 2-1 で止めたままにする。
+`--scale worker=2` は **1台の EC2 の中のプロセス数**で、台数（x1〜x4）に関係なく常に 2（t3.micro の vCPU 数）。台数は、このコマンドを実行する EC2 の数で決まる（x1 は Worker 1 だけ、x2 は Worker 1・2、…）。
+
 
 ### 2-5. producer を実行する（Control Plane で）
 
