@@ -122,10 +122,10 @@ bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
 ```
 
 ### 2-3. Mock を新しい run-label で起動し直す（Mock で）
-　　この際、手元でLABELを設定しなおすこと
+手元（結果を回収する PC）のシェルでも同じ LABEL を設定し直すこと。
 
 ```bash
-LABEL=A-distributed-x3-p2-c32-run1     # 毎回変える
+LABEL=A-distributed-x1-p2-c32-run1     # 毎回変える（x1〜x4 の台数に合わせる）
 sudo systemctl stop bench-mock; sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
 sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
   -m benchmark.mock.server --scenario benchmark/mock/scenarios/A_scaling.yaml --run-label $LABEL \
