@@ -1,4 +1,10 @@
 # 試験A：スケーリング試験（性能計測用）
+# 試験C で1プロセスの限界（窓口32で約 20 URLs/sec）が分かったため、Worker を1台2プロセスにして台数を 1〜4 台に増やす。
+# 4台 × 2プロセス × 窓口32 = 256 窓口（見込み約 160 URLs/sec）でもシナリオ側で頭打ちにならないよう、
+# ドメイン数を 1,000（理論上限 1,000 URLs/sec）にしている。旧版（100 ドメイン × 50 ページ、上限 100 URLs/sec）は
+# 窓口の合計が 100 を超える x2 以降で頭打ちになるため使わない（git の履歴に残っている）。
+# 1ドメインは 30 ページ（最短約 31 秒）。ドメインが少ないと最後のドメインを待つ時間の割合が大きくなるため、
+# 窓口数に対してドメイン数を十分多く（4倍程度）している。
 # 内容確認: python -m benchmark.mock.inspect_scenario benchmark/mock/scenarios/A_scaling.yaml
 scenario: A-scaling
 seed: 42                      # ページ構成・応答種別の割り当てに使う乱数seed
@@ -6,26 +12,20 @@ scheme: https                 # クローラーは robots.txt / sitemap を http
 domain_suffix: bench.internal
 
 # ドメイン数の指定：total_domains + mix（比率） / counts（件数） / domains（個別列挙）のいずれか1つ
-total_domains: 10000
+total_domains: 1000
 mix:                          # 比率の合計は1.0。端数は最大剰余法で配分する
-  normal: 0.90
-  slow: 0.04
-  failure: 0.04
-  robots_error: 0.01
-  sitemap_error: 0.01
-# counts:                     # 件数で直接指定する場合（mix の代わりに使う）
-#   normal: 90
-#   slow: 4
-#   failure: 4
-#   robots_error: 1
-#   sitemap_error: 1
+  normal: 0.97
+  slow: 0.01
+  failure: 0.01
+  robots_error: 0.005
+  sitemap_error: 0.005
 
 # ドメイン種別ごとの設定。省略した項目は scenario.py の DEFAULT_PROFILE の値になる
 profiles:
   normal:
     crawl_delay: 1            # 整数秒（R1.5）
-    pages: 50                 # ルート "/" を除くページ数
-    links_per_page: 5         # ページツリーの分岐数（ツリーの深さ = ceil(log_5(50)) 程度）
+    pages: 30                 # ルート "/" を除くページ数（旧版は 50、試験C は 20）
+    links_per_page: 5         # ページツリーの分岐数
     extra_links: 2            # ツリー外のランダムな同一ドメイン内リンク数
     sitemap_ratio: 0.8        # 残りのページはリンクをたどって発見される
     paragraphs: 4             # 本文の段落数（ページサイズの調整用）
@@ -35,7 +35,7 @@ profiles:
     responses: {fast: 0.5, slow: 0.4, very_slow: 0.1}
   failure:
     inherit: normal
-    responses: {fast: 0.8, error_500: 0.1, timeout: 0.1}
+    responses: {fast: 0.87, error_500: 0.1, timeout: 0.03}   # タイムアウトは1ページあたり約60秒かかるため1ドメイン1ページに抑える
   robots_error:
     inherit: normal
     # 404: クローラーは robots.txt なし（全許可・Crawl-delay なし）として扱う
@@ -59,4 +59,4 @@ response_types:
 checks:
   crawler_max_depth: 5            # ETL_WORKER_MAX_DEPTH
   client_timeout_sec: 30          # ETL_REQUESTS_TIMEOUT_SEC
-  min_theoretical_throughput: 50  # 理論上限がこれを下回ると警告（URLs/sec）
+  min_theoretical_throughput: 400 # 理論上限がこれを下回ると警告（URLs/sec）

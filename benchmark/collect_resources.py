@@ -1,0 +1,73 @@
+"""計測が終わったら、各インスタンスの CPU・メモリの記録（etl_resource_log_*.csv）を結果フォルダに回収する。
+
+Legacy と分散版の Worker は、実行中の CPU・メモリを 5 秒ごとに log/etl_resource_log_<時刻>.csv に記録している
+（ControlPlane/resource_recorder.py、Legacy は ETL/resource_recorder.py）。
+各インスタンスの新しい順に --files 個（既定 4）を <run-dir>/resources/<インスタンス名>__<ファイル名>.csv として保存し、
+benchmark.analysis.report が CPU avg / RSS max として集計する。
+
+1台で複数プロセス（`bench up -d --scale worker=2 worker`）を動かすと、プロセスごとに1ファイルできる
+（ファイル名にコンテナの hostname が付く）。前回以前の計測のファイルが混ざっても、集計時に計測期間外として除外される。
+
+使い方（手元の PC、リポジトリのルートで実行）:
+  python -m benchmark.collect_resources --key ~/UniversityComparisonKey.pem --run-dir benchmark/results/A-distributed-x2-run1 --role worker
+  python -m benchmark.collect_resources --key ~/UniversityComparisonKey.pem --run-dir benchmark/results/A-legacy-x1-run1 --role legacy
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from benchmark.distribute_certs import SSH_USER, find_instances, ssh_base
+
+# ~/bench-app（分散版）と ~/legacy-app（Legacy）の log/ を探す
+REMOTE_GLOB = "~/bench-app/log/etl_resource_log_*.csv ~/legacy-app/log/etl_resource_log_*.csv"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Collect resource logs from crawler instances")
+    parser.add_argument("--key", required=True, help="SSH private key (UniversityComparisonKey.pem)")
+    parser.add_argument("--run-dir", required=True, help="benchmark/results/<run-label>")
+    parser.add_argument("--role", required=True, choices=["worker", "legacy"])
+    parser.add_argument("--region", default="ap-northeast-1")
+    parser.add_argument("--files", type=int, default=4,
+                        help="newest resource logs to collect per instance (>= processes per instance)")
+    args = parser.parse_args()
+
+    key = str(Path(args.key).expanduser())
+    out = Path(args.run_dir) / "resources"
+    out.mkdir(parents=True, exist_ok=True)
+    collected = 0
+    for instance in find_instances(args.region):
+        if instance["role"] != args.role:
+            continue
+        if instance["state"] != "running" or not instance["public_ip"]:
+            print(f"skip: {instance['name']} ({instance['state']})")
+            continue
+        host = f"{SSH_USER}@{instance['public_ip']}"
+        found = subprocess.run(
+            ["ssh", *ssh_base(key), host, f"ls -t {REMOTE_GLOB} 2>/dev/null | head -{args.files}"],
+            capture_output=True, text=True,
+        )
+        remotes = found.stdout.split()
+        if not remotes:
+            print(f"skip: {instance['name']} — no resource log found")
+            continue
+        for remote in remotes:
+            dest = out / f"{instance['name']}__{Path(remote).name}"
+            copied = subprocess.run(["scp", *ssh_base(key), f"{host}:{remote}", os.path.relpath(dest)],
+                                    capture_output=True, text=True)
+            if copied.returncode != 0:
+                print(f"failed: {instance['name']}: {copied.stderr.strip()}")
+                continue
+            rows = sum(1 for _ in dest.open(encoding="utf-8")) - 1
+            print(f"collected: {instance['name']} {remote} -> {dest} ({rows} samples)")
+            collected += 1
+    if not collected:
+        sys.exit("no resource logs were collected")
+
+
+if __name__ == "__main__":
+    main()

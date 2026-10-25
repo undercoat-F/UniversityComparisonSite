@@ -72,7 +72,7 @@ sudo docker compose --profile distributed stop worker
 
 ```bash
 python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem
-python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem --check   # HTTP 200 になること
+python -m benchmark.distribute_certs --key ~/UniversityComparisonKey.pem --check   # HTTP 404 になること（シナリオにないホストへの確認。000 なら証明書か名前解決の失敗）
 ```
 
 ---
@@ -132,7 +132,10 @@ Valkey は VPC 内からしか接続できないため Control Plane で、SQS �
 
 ```bash
 # 手元の PC: pages.csv を Control Plane に送り、SQS を片付ける
+# benchmark/results/ は .gitignore 対象で clone では作られないため、先に作る（ないと scp が失敗する）
+ssh -i ~/UniversityComparisonKey.pem ubuntu@35.73.202.127 "mkdir -p ~/bench-app/benchmark/results"
 scp -i ~/UniversityComparisonKey.pem -r benchmark/results/B-inspect ubuntu@35.73.202.127:~/bench-app/benchmark/results/
+ssh -i ~/UniversityComparisonKey.pem ubuntu@35.73.202.127 "ls ~/bench-app/benchmark/results/B-inspect"   # pages.csv があること
 python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey             # 確認のみ
 python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey --execute   # 実行
 
@@ -217,3 +220,101 @@ python -m benchmark.analysis.report run benchmark/results/B-smoke-x1-run1
 ```
 
 期待する結果: coverage 100%、Crawl-delay violations 0、unexpected failures 0。
+
+#-------------------
+1.片付け用のURL一覧を作る
+python -m benchmark.mock.inspect_scenario benchmark/mock/scenarios/B_crawl_delay.yaml --out benchmark/results/B-inspect
+
+2.: Neon の bench-run を初期状態に戻す
+python -m benchmark.neon_branch reset
+仮想環境を有効にしないと起動できない(スクリプトのライブラリが入っていないから)
+
+3.sshで各EC2へ入り、git clone,.envのコピー
+
+4.4：Valkey と SQS の片付け
+
+片付けは 2 か所で行います。SQS は、キューを空にする権限がある手元の PC から行います。Valkey は VPC の中からしか接続できないので、Control Plane から行います。どちらも、まず確認だけ（何も消さない）で実行してください。
+
+① 手元の PC（Git Bash、リポジトリのルート）
+python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey
+
+② Control Plane（pages.csv を送ってから、~/bench-app で
+python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey
+
+② Control Plane（pages.csv を送ってから、~/bench-app で
+# 手元の PC から送る
+scp -i ~/UniversityComparisonKey.pem -r benchmark/results/B-inspect ubuntu@35.73.202.127:~/bench-app/benchmark/results/
+
+# Control Plane で実行
+cd ~/bench-app
+alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile distributed'
+bench run --rm --build -v "$PWD/benchmark:/app/benchmark" controlplane \
+  python -m benchmark.reset_state --pages /app/benchmar --skip-sqs
+
+5.Worker 1 で計測用の Worker を起動
+
+Worker 1 に SSH で入って
+
+cd ~/bench-app
+alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile distributed'
+bench up -d --build worker
+bench logs -f worker
+
+- 初回はビルドがあるので、t3.micro だと数分かかるかもしれません。
+- logs -f はログを流し続けます。Ctrl+C で抜けてもコンテナは止まりません。
+
+ 6：producer の実行（Control Plane で）
+
+Worker 1 のログは別のターミナルで流したままにしておくと、両方を同時に見られて分かりやすいです。
+
+cd ~/bench-app
+alias bench='sudo docker compose -p bench -f docker-compose.yml -f docker-compose.bench.yml --profile distributed'
+bench run --rm controlplane
+
+レコード集計
+Worker を止める（Worker 1）
+bench stop worker
+bench logs worker | grep RECORD_DB
+
+ Mock を止めて結果を回収・集計する（手順書のステップ 8・9）
+   - Mock の停止：sudo systemctl stop bench-mock
+   - 手元の PC で実行：
+scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/B-smoke-x1-run1 benchmark/results/
+python -m benchmark.analysis.report run benchmark/results/B-smoke-x1-run1
+
+-----
+1. 手元の PC：Neon を初期状態に戻す
+python -m benchmark.neon_branch reset
+bench-run には、前回の計測データと、型エラーの確認で入れたテスト用の 3 行が残っています。それを消すためです。
+
+2. Control Plane と Worker 1：最新のコードにする
+cd ~/bench-app && git pull && git log --oneline -1     # 1b932ff と出ること
+
+3. 片付け（前回の計測で Valkey に記録が残っているので、今回は --execute まで実行します）
+# 手元の PC：SQS（確認してから、件数があれば --execute）
+python -m benchmark.reset_state --pages benchmark/results/B-inspect/pages.csv --skip-valkey
+
+# Control Plane（alias bench を設定してから）：Valkey
+bench run --rm -v "$PWD/benchmark:/app/benchmark" controlplane \
+  python -m benchmark.reset_state --pages /app/benchmark/results/B-inspect/pages.csv --skip-sqs --execute
+Valkey の重複排除キーが「〜 exist」と表示され、deleted … と出れば消えています。
+
+4. Mock の EC2：新しい run-label で起動し直す
+sudo systemctl reset-failed bench-mock 2>/dev/null; cd ~/bench-mock
+sudo systemd-run --unit bench-mock --working-directory "$HOME/bench-mock" "$HOME/bench-mock/.venv/bin/python" \
+  -m benchmark.mock.server --scenario benchmark/mock/scenarios/B_crawl_delay.yaml --run-label B-fifofix-x1-run1 \
+  --results-dir /var/lib/benchmark/results --certfile /etc/benchmark/server.crt --keyfile /etc/benchmark/server.key
+systemctl is-active bench-mock
+
+5. Worker 1：ビルドし直して起動する
+bench up -d --build worker
+bench logs -f worker
+start … max_concurrency=4 が出れば OK です。前回と違って、received 4 message(s) の行は出なくなります。
+
+6. Control Plane：producer を実行する
+bench run --rm controlplane
+
+7. 終わったら止めて、集計し、改善前と比べる（手元の PC）
+scp -i ~/UniversityComparisonKey.pem -r ubuntu@13.196.23.137:/var/lib/benchmark/results/B-fifofix-x1-run1 benchmark/results/
+python -m benchmark.analysis.report run benchmark/results/B-fifofix-x1-run1
+python -m benchmark.analysis.report compare benchmark/results/B-smoke-x1-run1 benchmark/results/B-fifofix-x1-run1 --baseline B-smoke-x1

@@ -159,6 +159,7 @@ def start_resource_monitor(
     *,
     run_id: int | None = None,
     worker_id: str | None = None,
+    file_suffix: str | None = None,
 ):
     if not _env_bool(RESOURCE_MONITOR_ENABLED_ENV, True):
         print("[MONITOR] resource monitoring disabled by env", flush=True)
@@ -173,7 +174,10 @@ def start_resource_monitor(
     resolved_worker_id = worker_id or os.getenv("WORKER_ID", "").strip() or socket.gethostname()
     sample_writer = _build_resource_sample_writer()
 
-    monitor_path = os.path.join("log", f"etl_resource_log_{log_dt}.csv")
+    # 同じ EC2 で複数のプロセス（コンテナ）が log/ を共有するとき、同じ秒に起動してもファイルが重ならないよう
+    # file_suffix（コンテナの hostname など）を付ける
+    suffix = f"_{file_suffix}" if file_suffix else ""
+    monitor_path = os.path.join("log", f"etl_resource_log_{log_dt}{suffix}.csv")
     os.makedirs("log", exist_ok=True)
 
     process = psutil.Process(os.getpid())

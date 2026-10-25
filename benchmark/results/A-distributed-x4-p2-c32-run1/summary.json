@@ -1,0 +1,134 @@
+{
+  "label": "A-distributed-x4-p2-c32-run1",
+  "config": "A-distributed-x4-p2-c32",
+  "start_ts": 1792313667.2692814,
+  "end_ts": 1792314068.9758818,
+  "total_time_sec": 401.70660042762756,
+  "requests": 40894,
+  "page_requests": 31040,
+  "robots_requests": 8854,
+  "sitemap_requests": 1000,
+  "undefined_requests": 0,
+  "urls": 31000,
+  "expected_urls": 31000,
+  "coverage": 1.0,
+  "missing_urls": 0,
+  "retried_urls": 40,
+  "urls_per_sec": 77.17075090874698,
+  "seed_phase_sec": 82.36687111854553,
+  "crawl_phase_sec": 319.33972930908203,
+  "crawl_urls_per_sec": 97.07529992297253,
+  "requests_per_sec": 77.27032607120988,
+  "failed_urls": 40,
+  "url_error_rate": 0.0012903225806451613,
+  "request_error_rate": 0.002577319587628866,
+  "unexpected_failed_urls": 0,
+  "unexpected_failed_examples": [],
+  "server_latency_ms": {
+    "p50": 11.371731758117676,
+    "p95": 21.591091156005856,
+    "max": 2006.2575340270996
+  },
+  "mock_overhead_ms": {
+    "p50": 1.3668441772460938,
+    "p95": 10.832622051239008
+  },
+  "workers": 4,
+  "page_requests_by_worker": {
+    "172.31.28.11": 7828,
+    "172.31.18.72": 7749,
+    "172.31.25.123": 7746,
+    "172.31.27.171": 7717
+  },
+  "crawl_delay": {
+    "domains_checked": 995,
+    "domains_excluded": 5,
+    "violations": 0,
+    "domains_with_violations": 0,
+    "min_margin_sec": 0.03161358833312988,
+    "retry_pairs": 40
+  },
+  "crawl_delay_tolerance_sec": 0.05,
+  "resources": {
+    "hosts": {
+      "UniversityComparison-worker-1__etl_resource_log_20261018_085549_b0ccce1e506e": {
+        "samples": 64,
+        "cpu_avg_percent": 51.25625,
+        "cpu_max_percent": 72.7,
+        "process_cpu_avg_percent": 48.9484375,
+        "process_cpu_max_percent": 68.4,
+        "rss_max_mb": 107.4,
+        "memory_max_percent": 64.7
+      },
+      "UniversityComparison-worker-1__etl_resource_log_20261018_085550_38ead0e827f9": {
+        "samples": 64,
+        "cpu_avg_percent": 51.25625,
+        "cpu_max_percent": 72.2,
+        "process_cpu_avg_percent": 49.15,
+        "process_cpu_max_percent": 68.2,
+        "rss_max_mb": 106.5,
+        "memory_max_percent": 64.7
+      },
+      "UniversityComparison-worker-2__etl_resource_log_20261018_085555_ca6c50a42543": {
+        "samples": 63,
+        "cpu_avg_percent": 52.34126984126984,
+        "cpu_max_percent": 74.9,
+        "process_cpu_avg_percent": 50.698412698412696,
+        "process_cpu_max_percent": 70.7,
+        "rss_max_mb": 108.4,
+        "memory_max_percent": 64.3
+      },
+      "UniversityComparison-worker-2__etl_resource_log_20261018_085555_dbf1d360e4d1": {
+        "samples": 63,
+        "cpu_avg_percent": 52.34761904761905,
+        "cpu_max_percent": 74.9,
+        "process_cpu_avg_percent": 49.90952380952381,
+        "process_cpu_max_percent": 70.3,
+        "rss_max_mb": 107.0,
+        "memory_max_percent": 64.3
+      },
+      "UniversityComparison-worker-3__etl_resource_log_20261018_085558_88b6a894b0e6": {
+        "samples": 63,
+        "cpu_avg_percent": 51.834920634920636,
+        "cpu_max_percent": 72.3,
+        "process_cpu_avg_percent": 50.18888888888889,
+        "process_cpu_max_percent": 71.9,
+        "rss_max_mb": 110.1,
+        "memory_max_percent": 64.9
+      },
+      "UniversityComparison-worker-3__etl_resource_log_20261018_085558_efecc7c965e5": {
+        "samples": 63,
+        "cpu_avg_percent": 51.817460317460316,
+        "cpu_max_percent": 72.2,
+        "process_cpu_avg_percent": 49.953968253968256,
+        "process_cpu_max_percent": 68.7,
+        "rss_max_mb": 109.7,
+        "memory_max_percent": 64.9
+      },
+      "UniversityComparison-worker-4__etl_resource_log_20261018_085553_91edcdf33fef": {
+        "samples": 64,
+        "cpu_avg_percent": 51.78125,
+        "cpu_max_percent": 76.8,
+        "process_cpu_avg_percent": 50.0328125,
+        "process_cpu_max_percent": 70.3,
+        "rss_max_mb": 107.8,
+        "memory_max_percent": 63.3
+      },
+      "UniversityComparison-worker-4__etl_resource_log_20261018_085553_bcb0b154e767": {
+        "samples": 64,
+        "cpu_avg_percent": 51.7921875,
+        "cpu_max_percent": 77.0,
+        "process_cpu_avg_percent": 48.7109375,
+        "process_cpu_max_percent": 68.4,
+        "rss_max_mb": 107.9,
+        "memory_max_percent": 63.3
+      }
+    },
+    "cpu_avg_percent": 51.80340091765873,
+    "cpu_max_percent": 77.0,
+    "rss_max_mb": 110.1,
+    "process_cpu_avg_percent": 49.69912264384921,
+    "process_cpu_max_percent": 71.9
+  },
+  "scenario": "A-scaling"
+}

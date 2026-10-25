@@ -90,14 +90,24 @@ def list_project_ids(api: NeonApi) -> list[str]:
 
 
 def find_production(api: NeonApi, db_host: str, project_id: Optional[str]) -> tuple[str, str]:
-    """(project_id, 本番ブランチの id) を DB_HOST のエンドポイントから求める。"""
-    endpoint_id = endpoint_id_from_host(db_host)
-    project_ids = [project_id] if project_id else list_project_ids(api)
-    for pid in project_ids:
-        for endpoint in api.request("GET", f"/projects/{pid}/endpoints")["endpoints"]:
-            if endpoint["id"] == endpoint_id:
-                return pid, endpoint["branch_id"]
-    sys.exit(f"could not find the Neon endpoint {endpoint_id} (from DB_HOST); set NEON_PROJECT_ID")
+    """(project_id, 本番ブランチの id) を返す。
+
+    プロジェクトは DB_HOST のエンドポイントが属するものを探す（どのブランチのホストでもよい）。
+    本番ブランチは DB_HOST からではなく、プロジェクトの既定（default）ブランチとして API から特定する。
+    計測のために DB_HOST を bench-run に向けていても、bench-run を本番と誤認しないため。
+    """
+    if not project_id:
+        endpoint_id = endpoint_id_from_host(db_host)
+        for pid in list_project_ids(api):
+            if any(e["id"] == endpoint_id for e in api.request("GET", f"/projects/{pid}/endpoints")["endpoints"]):
+                project_id = pid
+                break
+        else:
+            sys.exit(f"could not find the Neon endpoint {endpoint_id} (from DB_HOST); set NEON_PROJECT_ID")
+    defaults = [b for b in api.request("GET", f"/projects/{project_id}/branches")["branches"] if b.get("default")]
+    if len(defaults) != 1:
+        sys.exit("could not determine the default (production) branch of the Neon project")
+    return project_id, defaults[0]["id"]
 
 
 def branches_by_name(api: NeonApi, project_id: str) -> dict[str, dict]:

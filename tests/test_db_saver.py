@@ -115,3 +115,18 @@ class TestPatternUpsert(unittest.TestCase):
             _, id_map = db_saver._insert_patterns_rows(conn, rows)
 
         self.assertEqual(id_map, {"pattern-1": 10, "pattern-2": 11})
+
+    def test_numeric_columns_are_cast_explicitly(self):
+        # まとめた行の値がすべて NULL だと VALUES の列が text と推測されるため、型を明示していること
+        conn = FakeConnection()
+        captured = {}
+
+        def fake_execute_values(cursor, sql_stmt, payload):
+            captured["sql"] = sql_stmt
+            cursor.returned_rows = [(payload[0][0], 10)]
+
+        with patch.object(db_saver, "execute_values", side_effect=fake_execute_values):
+            db_saver._insert_patterns_rows(conn, [_pattern_row("pattern-1", "")])
+
+        for column in ("amount", "amount_min", "amount_max", "normalized_monthly_amount"):
+            self.assertIn(f"src.{column}::numeric", captured["sql"])

@@ -174,6 +174,13 @@ def compute_run_metrics(run: RunData) -> dict[str, Any]:
         "missing_urls": len(missing),
         "retried_urls": sum(len(rs) > 1 for rs in by_url.values()),
         "urls_per_sec": len(fetched) / total_time if total_time > 0 else None,
+        # 準備（robots.txt・sitemap の取得〜最初のページ取得まで）とクロールの時間。準備が長い場合は
+        # producer / Legacy の起点投入処理がボトルネック（例: キューログの1行ずつの DB 書き込み）
+        "seed_phase_sec": (min(r.recv_ts for r in pages) - start) if pages else None,
+        "crawl_phase_sec": (end - min(r.recv_ts for r in pages)) if pages else None,
+        # 準備の時間は Worker の台数を増やしても縮まないため、台数によるスケールはクロールの時間だけでも見る
+        "crawl_urls_per_sec": (len(fetched) / (end - min(r.recv_ts for r in pages))
+                               if pages and end > min(r.recv_ts for r in pages) else None),
         "requests_per_sec": len(pages) / total_time if total_time > 0 else None,
         "failed_urls": len(failed_urls),
         "url_error_rate": len(failed_urls) / len(fetched) if fetched else None,
@@ -241,4 +248,52 @@ def summarize_crawl_delay(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "domains_with_violations": sum(r["violations"] > 0 for r in applicable),
         "min_margin_sec": min((r["min_interval"] - r["required_delay"] for r in applicable), default=None),
         "retry_pairs": sum(r["retry_pairs"] for r in rows),
+    }
+
+
+def compute_resource_usage(run_dir: str | Path, start_ts: Optional[float], end_ts: Optional[float]) -> dict[str, Any]:
+    """resources/*.csv（各インスタンスの etl_resource_log、benchmark.collect_resources で回収）から CPU・メモリを集計する。
+
+    - 計測期間（Mock のアクセスログの最初〜最後）に含まれるサンプルだけを使う。タイムスタンプは EC2 の時刻（UTC）
+    - 期間内のサンプルがないファイルは集計しない（その計測で使っていない Worker の古い記録が混ざらないように）
+    """
+    files = sorted(Path(run_dir).glob("resources/*.csv"))
+    if not files:
+        return {}
+    from datetime import datetime, timedelta, timezone
+
+    window = None
+    if start_ts is not None and end_ts is not None:
+        to_utc = lambda ts: datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)  # noqa: E731
+        window = (to_utc(start_ts) - timedelta(seconds=5), to_utc(end_ts) + timedelta(seconds=5))
+
+    hosts = {}
+    for path in files:
+        with path.open(encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+        if window:
+            rows = [r for r in rows if window[0] <= datetime.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S") <= window[1]]
+        if not rows:
+            continue
+        cpu = [float(r["system_cpu_percent"]) for r in rows]
+        proc_cpu = [float(r["process_cpu_percent"]) for r in rows]
+        hosts[path.stem] = {
+            "samples": len(rows),
+            "cpu_avg_percent": sum(cpu) / len(cpu),
+            "cpu_max_percent": max(cpu),
+            "process_cpu_avg_percent": sum(proc_cpu) / len(proc_cpu),
+            "process_cpu_max_percent": max(proc_cpu),
+            "rss_max_mb": max(float(r["process_rss_mb"]) for r in rows),
+            "memory_max_percent": max(float(r["system_memory_percent"]) for r in rows),
+        }
+    if not hosts:
+        return {}
+    return {
+        "hosts": hosts,
+        "cpu_avg_percent": sum(h["cpu_avg_percent"] for h in hosts.values()) / len(hosts),
+        "cpu_max_percent": max(h["cpu_max_percent"] for h in hosts.values()),
+        "rss_max_mb": max(h["rss_max_mb"] for h in hosts.values()),
+        # プロセスの CPU（1コア=100%）。1台で複数プロセスのときはファイル（プロセス）ごとの平均の平均
+        "process_cpu_avg_percent": sum(h["process_cpu_avg_percent"] for h in hosts.values()) / len(hosts),
+        "process_cpu_max_percent": max(h["process_cpu_max_percent"] for h in hosts.values()),
     }

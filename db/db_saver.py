@@ -542,15 +542,17 @@ def _insert_patterns_rows(conn, rows):
             upsert AS (
                 INSERT INTO {TUITION_PATTERNS_TABLE}
                 (degree_level, amount, currency, fee_type, tuition_type, amount_min, amount_max, normalized_monthly_amount, normalization_note)
+                -- VALUES の列の型は値から推測されるため、まとめた行の値がすべて NULL だと text になり、
+                -- numeric の列に入れられずエラーになる。数値の列は型を明示する。
                 SELECT
                     src.degree_level,
-                    src.amount,
+                    src.amount::numeric,
                     src.currency,
                     src.fee_type,
                     src.tuition_type,
-                    src.amount_min,
-                    src.amount_max,
-                    src.normalized_monthly_amount,
+                    src.amount_min::numeric,
+                    src.amount_max::numeric,
+                    src.normalized_monthly_amount::numeric,
                     src.normalization_note
                 FROM src
                 ON CONFLICT (degree_level, amount, currency, fee_type, tuition_type)
@@ -565,7 +567,7 @@ def _insert_patterns_rows(conn, rows):
             FROM src
             JOIN upsert
                 ON upsert.degree_level IS NOT DISTINCT FROM src.degree_level
-               AND upsert.amount IS NOT DISTINCT FROM src.amount
+               AND upsert.amount IS NOT DISTINCT FROM src.amount::numeric
                AND upsert.currency IS NOT DISTINCT FROM src.currency
                AND upsert.fee_type = src.fee_type
                AND upsert.tuition_type = src.tuition_type;

@@ -1,0 +1,115 @@
+{
+  "label": "A-distributed-x3-p2-c32-run1",
+  "config": "A-distributed-x3-p2-c32",
+  "start_ts": 1792311779.5883327,
+  "end_ts": 1792312241.7010906,
+  "total_time_sec": 462.1127579212189,
+  "requests": 38911,
+  "page_requests": 31040,
+  "robots_requests": 6871,
+  "sitemap_requests": 1000,
+  "undefined_requests": 0,
+  "urls": 31000,
+  "expected_urls": 31000,
+  "coverage": 1.0,
+  "missing_urls": 0,
+  "retried_urls": 40,
+  "urls_per_sec": 67.08319445550752,
+  "seed_phase_sec": 86.29008889198303,
+  "crawl_phase_sec": 375.82266902923584,
+  "crawl_urls_per_sec": 82.48571082759369,
+  "requests_per_sec": 67.16975341609528,
+  "failed_urls": 40,
+  "url_error_rate": 0.0012903225806451613,
+  "request_error_rate": 0.002577319587628866,
+  "unexpected_failed_urls": 0,
+  "unexpected_failed_examples": [],
+  "server_latency_ms": {
+    "p50": 11.529207229614258,
+    "p95": 29.51003313064574,
+    "max": 2058.4335327148438
+  },
+  "mock_overhead_ms": {
+    "p50": 1.524200439453125,
+    "p95": 18.522789478302
+  },
+  "workers": 3,
+  "page_requests_by_worker": {
+    "172.31.25.123": 10506,
+    "172.31.27.171": 10379,
+    "172.31.18.72": 10155
+  },
+  "crawl_delay": {
+    "domains_checked": 995,
+    "domains_excluded": 5,
+    "violations": 0,
+    "domains_with_violations": 0,
+    "min_margin_sec": 0.03242850303649902,
+    "retry_pairs": 40
+  },
+  "crawl_delay_tolerance_sec": 0.05,
+  "resources": {
+    "hosts": {
+      "UniversityComparison-worker-1__etl_resource_log_20261018_082428_4d983e975026": {
+        "samples": 75,
+        "cpu_avg_percent": 55.272,
+        "cpu_max_percent": 74.5,
+        "process_cpu_avg_percent": 52.784,
+        "process_cpu_max_percent": 72.0,
+        "rss_max_mb": 120.2,
+        "memory_max_percent": 67.2
+      },
+      "UniversityComparison-worker-1__etl_resource_log_20261018_082428_d35b889d009d": {
+        "samples": 75,
+        "cpu_avg_percent": 55.27333333333333,
+        "cpu_max_percent": 74.1,
+        "process_cpu_avg_percent": 52.79866666666667,
+        "process_cpu_max_percent": 68.8,
+        "rss_max_mb": 121.7,
+        "memory_max_percent": 67.2
+      },
+      "UniversityComparison-worker-2__etl_resource_log_20261018_082425_bb86a555f414": {
+        "samples": 76,
+        "cpu_avg_percent": 53.80263157894737,
+        "cpu_max_percent": 73.9,
+        "process_cpu_avg_percent": 51.15,
+        "process_cpu_max_percent": 68.7,
+        "rss_max_mb": 120.2,
+        "memory_max_percent": 67.4
+      },
+      "UniversityComparison-worker-2__etl_resource_log_20261018_082426_66ef426dfe51": {
+        "samples": 76,
+        "cpu_avg_percent": 53.8,
+        "cpu_max_percent": 73.4,
+        "process_cpu_avg_percent": 51.026315789473685,
+        "process_cpu_max_percent": 69.8,
+        "rss_max_mb": 120.5,
+        "memory_max_percent": 67.4
+      },
+      "UniversityComparison-worker-3__etl_resource_log_20261018_082425_8e525659e35a": {
+        "samples": 76,
+        "cpu_avg_percent": 55.00394736842105,
+        "cpu_max_percent": 72.0,
+        "process_cpu_avg_percent": 52.14605263157895,
+        "process_cpu_max_percent": 68.8,
+        "rss_max_mb": 124.0,
+        "memory_max_percent": 67.6
+      },
+      "UniversityComparison-worker-3__etl_resource_log_20261018_082425_e00b2796bf65": {
+        "samples": 76,
+        "cpu_avg_percent": 54.98421052631579,
+        "cpu_max_percent": 72.5,
+        "process_cpu_avg_percent": 52.21842105263158,
+        "process_cpu_max_percent": 68.3,
+        "rss_max_mb": 121.2,
+        "memory_max_percent": 67.6
+      }
+    },
+    "cpu_avg_percent": 54.689353801169595,
+    "cpu_max_percent": 74.5,
+    "rss_max_mb": 124.0,
+    "process_cpu_avg_percent": 52.02057602339181,
+    "process_cpu_max_percent": 72.0
+  },
+  "scenario": "A-scaling"
+}

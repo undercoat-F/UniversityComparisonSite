@@ -61,9 +61,20 @@ def main() -> None:
 
     if not TABLE_RE.match(args.table):
         sys.exit(f"invalid table name: {args.table} (expected schema.table)")
-    production_host = os.getenv("DB_HOST", "").strip()
-    if production_host and endpoint_id(production_host) == endpoint_id(args.db_host):
-        sys.exit("refusing: --db-host is the production endpoint (DB_HOST); pass the bench-base host")
+    # 書き込み先が bench-base であることを Neon API で確かめる（DB_HOST は計測用に bench-run を指していることがあるため使わない）
+    api_key = os.getenv("NEON_API_KEY", "").strip()
+    if not api_key:
+        sys.exit("NEON_API_KEY is required to verify that --db-host is the bench-base branch")
+    from benchmark.neon_branch import BASE_BRANCH, NeonApi, branches_by_name, find_production
+
+    api = NeonApi(api_key)
+    project_id, _ = find_production(api, args.db_host, os.getenv("NEON_PROJECT_ID", "").strip() or None)
+    branch_names = {b["id"]: b["name"] for b in branches_by_name(api, project_id).values()}
+    target = endpoint_id(args.db_host)
+    owner = next((branch_names.get(e["branch_id"]) for e in api.request("GET", f"/projects/{project_id}/endpoints")["endpoints"]
+                  if e["id"] == target), None)
+    if owner != BASE_BRANCH:
+        sys.exit(f"refusing: --db-host belongs to branch '{owner}', not '{BASE_BRANCH}'")
 
     urls = seed_urls_from_scenario(Path(args.scenario)) if args.scenario else seed_urls_from_file(Path(args.seed_urls))
     if not urls:

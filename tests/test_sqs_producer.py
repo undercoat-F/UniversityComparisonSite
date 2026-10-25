@@ -17,7 +17,8 @@ class TestSqsProducer(unittest.IsolatedAsyncioTestCase):
         ), patch("ControlPlane.dispatcher.QueueLogStore", return_value=queue_logger), patch(
             "ControlPlane.dispatcher._seed_sitemaps_with_limits", new=AsyncMock(return_value=(0, 0))
         ), patch.dict(
-            "os.environ", {"REDIS_URL": "redis://localhost:6379/0", "PARENT_DB_OWNER_CONNECTION": "postgresql://unused"}, clear=False
+            "os.environ", {"REDIS_URL": "redis://localhost:6379/0", "PARENT_DB_OWNER_CONNECTION": "postgresql://unused",
+                           "QUEUE_LOG_ENABLED": "1"}, clear=False
         ):
             sites = await enqueue_initial_tasks(
                 [
@@ -48,12 +49,39 @@ class TestSqsProducer(unittest.IsolatedAsyncioTestCase):
         ), patch("ControlPlane.dispatcher.QueueLogStore", return_value=queue_logger), patch(
             "ControlPlane.dispatcher._seed_sitemaps_with_limits", new=AsyncMock(return_value=(0, 0))
         ), patch.dict(
-            "os.environ", {"REDIS_URL": "redis://localhost:6379/0", "PARENT_DB_OWNER_CONNECTION": "postgresql://unused"}, clear=False
+            "os.environ", {"REDIS_URL": "redis://localhost:6379/0", "PARENT_DB_OWNER_CONNECTION": "postgresql://unused",
+                           "QUEUE_LOG_ENABLED": "1"}, clear=False
         ):
             with self.assertRaisesRegex(RuntimeError, "SQS unavailable"):
                 await enqueue_initial_tasks([("https://example.edu/", 1)])
 
         task_queue.send_task.assert_called_once()
+
+
+    async def test_queue_state_is_not_logged_when_queue_log_is_disabled(self):
+        # 計測時（QUEUE_LOG_ENABLED=0）は URL ごとのキューログを書かず、実行の記録だけを書く
+        dedup_store = MagicMock()
+        dedup_store.mark_seen.return_value = True
+        task_queue = MagicMock()
+        queue_logger = MagicMock()
+        queue_logger.create_run.return_value = 123
+
+        with patch("ControlPlane.dispatcher.get_dedup_store", return_value=dedup_store), patch(
+            "ControlPlane.dispatcher.get_task_queue", return_value=task_queue
+        ), patch("ControlPlane.dispatcher.QueueLogStore", return_value=queue_logger), patch(
+            "ControlPlane.dispatcher._seed_sitemaps_with_limits", new=AsyncMock(return_value=(0, 0))
+        ), patch.dict(
+            "os.environ", {"REDIS_URL": "redis://localhost:6379/0", "PARENT_DB_OWNER_CONNECTION": "postgresql://unused",
+                           "QUEUE_LOG_ENABLED": "0"}, clear=False
+        ):
+            sites = await enqueue_initial_tasks([("https://example.edu/", 1)])
+
+        queue_logger.create_run.assert_called_once()
+        queue_logger.upsert_queue_state.assert_not_called()
+        self.assertIsNone(sites[0].queue_logger)   # sitemap 候補の追加時にもログを書かない
+        self.assertEqual(sites[0].run_id, 123)
+        _, send_kwargs = task_queue.send_task.call_args
+        self.assertEqual(send_kwargs["run_id"], 123)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from benchmark.analysis.metrics import (
     DEFAULT_TOLERANCE_SEC,
     RunData,
     compute_crawl_delay,
+    compute_resource_usage,
     compute_run_metrics,
     load_run,
     summarize_crawl_delay,
@@ -54,6 +55,7 @@ def analyze(run: RunData, tolerance: float) -> tuple[dict[str, Any], list[dict[s
     delay_rows = compute_crawl_delay(run, tolerance)
     metrics["crawl_delay"] = summarize_crawl_delay(delay_rows)
     metrics["crawl_delay_tolerance_sec"] = tolerance
+    metrics["resources"] = compute_resource_usage(run.path, metrics.get("start_ts"), metrics.get("end_ts"))
     resolved = run.path / "scenario.resolved.json"
     if resolved.exists():
         metrics["scenario"] = json.loads(resolved.read_text(encoding="utf-8")).get("scenario")
@@ -80,6 +82,14 @@ def warnings_for(m: dict[str, Any]) -> list[str]:
     return w
 
 
+def _resource_line(r: dict[str, Any]) -> str:
+    if not r:
+        return "- resources: - (resources/*.csv なし。python -m benchmark.collect_resources で回収する)"
+    return (f"- resources: CPU avg {r['cpu_avg_percent']:.0f}% / max {r['cpu_max_percent']:.0f}%, "
+            f"process CPU (1 core=100%) avg {r['process_cpu_avg_percent']:.0f}% / max {r['process_cpu_max_percent']:.0f}%, "
+            f"RSS max {r['rss_max_mb']:.0f} MB ({len(r['hosts'])} processes: {', '.join(r['hosts'])})")
+
+
 def render_run(m: dict[str, Any], delay_rows: list[dict[str, Any]]) -> str:
     if m.get("requests", 0) == 0:
         return f"# {m['label']}\n\nno requests\n"
@@ -88,9 +98,11 @@ def render_run(m: dict[str, Any], delay_rows: list[dict[str, Any]]) -> str:
         f"# {m['label']}",
         "",
         f"- scenario: {m.get('scenario', '-')}",
-        f"- total time: {m['total_time_sec']:.1f} sec",
+        f"- total time: {m['total_time_sec']:.1f} sec (seed phase {_f(m.get('seed_phase_sec'), '{:.1f}')} sec"
+        f" + crawl phase {_f(m.get('crawl_phase_sec'), '{:.1f}')} sec)",
         f"- URLs: {m['urls']} / expected {m['expected_urls']} (coverage {_pct(m['coverage'])})",
-        f"- throughput: {_f(m['urls_per_sec'])} URLs/sec ({_f(m['requests_per_sec'])} requests/sec)",
+        f"- throughput: {_f(m['urls_per_sec'])} URLs/sec ({_f(m['requests_per_sec'])} requests/sec), "
+        f"crawl phase only {_f(m.get('crawl_urls_per_sec'))} URLs/sec",
         f"- requests: pages {m['page_requests']}, robots {m['robots_requests']}, sitemap {m['sitemap_requests']}, "
         f"undefined {m['undefined_requests']}",
         f"- error rate: URL {_pct(m['url_error_rate'])} ({m['failed_urls']} URLs), "
@@ -103,6 +115,7 @@ def render_run(m: dict[str, Any], delay_rows: list[dict[str, Any]]) -> str:
         f"- Crawl-delay: {cd['violations']} violations in {cd['domains_checked']} domains "
         f"(tolerance {m['crawl_delay_tolerance_sec'] * 1000:.0f} ms, min margin {_f(cd['min_margin_sec'], '{:+.3f}')} sec, "
         f"excluded {cd['domains_excluded']} domains, retry pairs {cd['retry_pairs']})",
+        _resource_line(m.get("resources") or {}),
         "",
         "## Workers",
         "",
@@ -194,29 +207,51 @@ def cmd_compare(args: argparse.Namespace) -> None:
             "urls": _median([m["urls"] for m in ms]),
             "coverage": _median([m["coverage"] for m in ms]),
             "total_time": _median([m["total_time_sec"] for m in ms]),
+            "seed_phase": _median([m.get("seed_phase_sec") for m in ms]),
             "urls_per_sec": _median([m["urls_per_sec"] for m in ms]),
+            "crawl_urls_per_sec": _median([m.get("crawl_urls_per_sec") for m in ms]),
             "p50": _median([m["server_latency_ms"]["p50"] for m in ms]),
             "p95": _median([m["server_latency_ms"]["p95"] for m in ms]),
             "url_error_rate": _median([m["url_error_rate"] for m in ms]),
             "unexpected": sum(m["unexpected_failed_urls"] for m in ms),
             "violations": sum(m["crawl_delay"]["violations"] for m in ms),
+            "cpu_avg": _median([m["resources"].get("cpu_avg_percent") for m in ms]),
+            "cpu_max": _median([m["resources"].get("cpu_max_percent") for m in ms]),
+            "process_cpu_avg": _median([m["resources"].get("process_cpu_avg_percent") for m in ms]),
+            "rss_max": _median([m["resources"].get("rss_max_mb") for m in ms]),
             "scenarios": {m.get("scenario") for m in ms},
             "expected_urls": {m["expected_urls"] for m in ms},
         }
 
     base = agg[baseline]
     rows = []
+    csv_rows = []
     for config, a in agg.items():
         ratio = (a["urls_per_sec"] / base["urls_per_sec"]
                  if a["urls_per_sec"] and base["urls_per_sec"] else None)
         worker_ratio = a["workers"] / base["workers"] if a["workers"] and base["workers"] else None
+        scale_eff = ratio / worker_ratio if ratio and worker_ratio else None
         rows.append([
             config, str(a["runs"]), _f(a["workers"], "{:.0f}"), _f(a["urls"], "{:.0f}"), _pct(a["coverage"]),
-            _f(a["total_time"], "{:.1f}"), _f(a["urls_per_sec"]), _f(ratio, "{:.2f}x"),
-            _f(ratio / worker_ratio if ratio and worker_ratio else None, "{:.0%}"),
+            _f(a["total_time"], "{:.1f}"), _f(a["urls_per_sec"]), _f(a["crawl_urls_per_sec"]), _f(ratio, "{:.2f}x"), _f(scale_eff, "{:.0%}"),
             _f(a["p50"], "{:.0f}"), _f(a["p95"], "{:.0f}"), _pct(a["url_error_rate"]),
-            str(a["unexpected"]), str(a["violations"]), "-", "-",
+            str(a["unexpected"]), str(a["violations"]), _f(a["cpu_avg"], "{:.0f}%"), _f(a["rss_max"], "{:.0f}"),
         ])
+        csv_rows.append({
+            "architecture": config, "runs": a["runs"], "workers": a["workers"], "urls": a["urls"],
+            "coverage": a["coverage"], "total_time_sec": a["total_time"], "seed_phase_sec": a["seed_phase"],
+            "urls_per_sec": a["urls_per_sec"], "crawl_urls_per_sec": a["crawl_urls_per_sec"],
+            "vs_baseline": ratio, "scale_efficiency": scale_eff, "server_p50_ms": a["p50"], "server_p95_ms": a["p95"],
+            "url_error_rate": a["url_error_rate"], "unexpected_failures": a["unexpected"],
+            "crawl_delay_violations": a["violations"], "cpu_avg_percent": a["cpu_avg"],
+            "cpu_max_percent": a["cpu_max"], "process_cpu_avg_percent": a["process_cpu_avg"],
+            "rss_max_mb": a["rss_max"],
+        })
+    if args.csv:
+        with Path(args.csv).open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(csv_rows[0]))
+            writer.writeheader()
+            writer.writerows([{k: ("" if v is None else v) for k, v in r.items()} for r in csv_rows])
 
     warnings = []
     scenarios = set().union(*(a["scenarios"] for a in agg.values()))
@@ -235,15 +270,17 @@ def cmd_compare(args: argparse.Namespace) -> None:
         "## Performance",
         "",
         _table(
-            ["Architecture", "Runs", "Workers", "URLs", "Coverage", "Total Time (s)", "URLs/sec", "vs baseline",
+            ["Architecture", "Runs", "Workers", "URLs", "Coverage", "Total Time (s)", "URLs/sec", "Crawl URLs/sec", "vs baseline",
              "Scale eff.", "p50 (ms)", "p95 (ms)", "Error Rate", "Unexpected failures", "Crawl-delay violations",
-             "CPU", "Memory"],
+             "CPU avg", "RSS max (MB)"],
             rows,
         ),
         "",
         "- vs baseline: URLs/sec の baseline 比。Scale eff.: vs baseline ÷ Worker数の比（100% で線形スケール）",
+        "- Crawl URLs/sec: 準備（robots.txt・sitemap の取得〜最初のページ取得）を除いたクロールの時間だけで割った値",
         f"- {LATENCY_NOTE}",
-        "- CPU / Memory は CloudWatch 等から別途記入する",
+        "- CPU avg: 計測期間中のインスタンス全体の CPU 使用率の平均（複数台は台ごとの平均の平均）。"
+        "RSS max: クローラーのプロセスのメモリ使用量の最大（複数台は最大の台）。resources/*.csv がない計測は -",
         "",
         "## Crawl-delay",
         "",
@@ -273,6 +310,7 @@ def main() -> None:
     p_cmp.add_argument("run_dirs", nargs="+")
     p_cmp.add_argument("--baseline", help="config label used as the baseline (default: first)")
     p_cmp.add_argument("--out", help="write the markdown report to this file")
+    p_cmp.add_argument("--csv", help="write the performance table as CSV (for spreadsheets)")
     p_cmp.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE_SEC, help="Crawl-delay tolerance (sec)")
     p_cmp.set_defaults(func=cmd_compare)
 

@@ -124,3 +124,58 @@ class TestBenchmarkAnalysis(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResourceUsage(unittest.TestCase):
+    def test_uses_samples_within_the_run_window(self):
+        from datetime import datetime, timezone
+
+        from benchmark.analysis.metrics import compute_resource_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res = Path(tmp) / "resources"
+            res.mkdir()
+
+            def ts(offset):
+                return datetime.fromtimestamp(T0 + offset, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+            header = "timestamp,elapsed_sec,process_cpu_percent,process_rss_mb,system_cpu_percent,system_memory_percent\n"
+            (res / "worker-1.csv").write_text(header + "".join([
+                f"{ts(-60)},5,1,40,90,50\n",   # 計測前（対象外）
+                f"{ts(0)},10,10,100,20,50\n",
+                f"{ts(10)},15,10,120,40,55\n",
+            ]), encoding="utf-8")
+            (res / "worker-2.csv").write_text(header + f"{ts(5)},5,10,200,60,60\n", encoding="utf-8")
+
+            r = compute_resource_usage(tmp, T0, T0 + 10)
+
+        self.assertEqual(r["hosts"]["worker-1"]["samples"], 2)
+        self.assertAlmostEqual(r["hosts"]["worker-1"]["cpu_avg_percent"], 30.0)
+        self.assertAlmostEqual(r["cpu_avg_percent"], 45.0)   # (30 + 60) / 2
+        self.assertEqual(r["cpu_max_percent"], 60.0)
+        self.assertEqual(r["rss_max_mb"], 200.0)
+
+    def test_returns_empty_without_resource_logs(self):
+        from benchmark.analysis.metrics import compute_resource_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(compute_resource_usage(tmp, T0, T0 + 10), {})
+
+    def test_skips_hosts_without_samples_in_the_run_window(self):
+        from datetime import datetime, timezone
+
+        from benchmark.analysis.metrics import compute_resource_usage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res = Path(tmp) / "resources"
+            res.mkdir()
+            old = datetime.fromtimestamp(T0 - 3600, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.fromtimestamp(T0 + 1, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            header = "timestamp,elapsed_sec,process_cpu_percent,process_rss_mb,system_cpu_percent,system_memory_percent\n"
+            (res / "worker-1.csv").write_text(header + f"{now},5,10,100,20,50\n", encoding="utf-8")
+            (res / "worker-3.csv").write_text(header + f"{old},5,10,900,99,90\n", encoding="utf-8")  # 前回の計測の記録
+
+            r = compute_resource_usage(tmp, T0, T0 + 10)
+
+        self.assertEqual(list(r["hosts"]), ["worker-1"])
+        self.assertEqual(r["rss_max_mb"], 100.0)
