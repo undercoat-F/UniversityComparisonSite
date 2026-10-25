@@ -1,1 +1,14 @@
-results/
+# 計測結果は要約（report.md・summary.json・シナリオの yaml・resources/*.csv）だけを Git で管理する。
+# access.jsonl・pages.csv などの元データ（1回 15〜23 MB）と Mock の EBS のバックアップは手元にだけ置く。
+results/*
+!results/*/
+results/*/*
+!results/*/report.md
+!results/*/summary.json
+!results/*/*.yaml
+!results/*/resources/
+results/*/resources/*
+!results/*/resources/*.csv
+# 回収時の誤配置で残った古い重複
+results/results/
+results/resources/

@@ -1,0 +1,47 @@
+{
+  "label": "B-fifofix-x1-run1",
+  "config": "B-fifofix-x1",
+  "start_ts": 1791642616.8219492,
+  "end_ts": 1791642708.1102273,
+  "total_time_sec": 91.28827810287476,
+  "requests": 102,
+  "page_requests": 93,
+  "robots_requests": 6,
+  "sitemap_requests": 3,
+  "undefined_requests": 0,
+  "urls": 93,
+  "expected_urls": 93,
+  "coverage": 1.0,
+  "missing_urls": 0,
+  "retried_urls": 0,
+  "urls_per_sec": 1.018750730462856,
+  "requests_per_sec": 1.018750730462856,
+  "failed_urls": 0,
+  "url_error_rate": 0.0,
+  "request_error_rate": 0.0,
+  "unexpected_failed_urls": 0,
+  "unexpected_failed_examples": [],
+  "server_latency_ms": {
+    "p50": 10.662555694580078,
+    "p95": 10.937976837158203,
+    "max": 11.953353881835938
+  },
+  "mock_overhead_ms": {
+    "p50": 0.6625556945800781,
+    "p95": 0.9379768371582031
+  },
+  "workers": 1,
+  "page_requests_by_worker": {
+    "172.31.27.171": 93
+  },
+  "crawl_delay": {
+    "domains_checked": 3,
+    "domains_excluded": 0,
+    "violations": 0,
+    "domains_with_violations": 0,
+    "min_margin_sec": -0.04278731346130371,
+    "retry_pairs": 0
+  },
+  "crawl_delay_tolerance_sec": 0.05,
+  "scenario": "B-crawl-delay"
+}

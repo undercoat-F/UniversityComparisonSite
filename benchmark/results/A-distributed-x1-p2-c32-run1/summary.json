@@ -1,0 +1,77 @@
+{
+  "label": "A-distributed-x1-p2-c32-run1",
+  "config": "A-distributed-x1-p2-c32",
+  "start_ts": 1792310037.9768424,
+  "end_ts": 1792311035.5309904,
+  "total_time_sec": 997.5541479587555,
+  "requests": 36452,
+  "page_requests": 31040,
+  "robots_requests": 4412,
+  "sitemap_requests": 1000,
+  "undefined_requests": 0,
+  "urls": 31000,
+  "expected_urls": 31000,
+  "coverage": 1.0,
+  "missing_urls": 0,
+  "retried_urls": 40,
+  "urls_per_sec": 31.07600731592739,
+  "seed_phase_sec": 78.2148711681366,
+  "crawl_phase_sec": 919.3392767906189,
+  "crawl_urls_per_sec": 33.7198690218261,
+  "requests_per_sec": 31.116105389883426,
+  "failed_urls": 40,
+  "url_error_rate": 0.0012903225806451613,
+  "request_error_rate": 0.002577319587628866,
+  "unexpected_failed_urls": 0,
+  "unexpected_failed_examples": [],
+  "server_latency_ms": {
+    "p50": 11.293649673461914,
+    "p95": 13.91744613647461,
+    "max": 2003.2858848571777
+  },
+  "mock_overhead_ms": {
+    "p50": 1.29150390625,
+    "p95": 3.745379447937011
+  },
+  "workers": 1,
+  "page_requests_by_worker": {
+    "172.31.27.171": 31040
+  },
+  "crawl_delay": {
+    "domains_checked": 995,
+    "domains_excluded": 5,
+    "violations": 0,
+    "domains_with_violations": 0,
+    "min_margin_sec": 0.03873085975646973,
+    "retry_pairs": 40
+  },
+  "crawl_delay_tolerance_sec": 0.05,
+  "resources": {
+    "hosts": {
+      "UniversityComparison-worker-1__etl_resource_log_20261018_075516_3df657ffb7a7": {
+        "samples": 184,
+        "cpu_avg_percent": 64.62282608695652,
+        "cpu_max_percent": 74.4,
+        "process_cpu_avg_percent": 61.108695652173914,
+        "process_cpu_max_percent": 70.1,
+        "rss_max_mb": 116.2,
+        "memory_max_percent": 66.3
+      },
+      "UniversityComparison-worker-1__etl_resource_log_20261018_075517_d41b4af965e5": {
+        "samples": 184,
+        "cpu_avg_percent": 64.57065217391305,
+        "cpu_max_percent": 76.2,
+        "process_cpu_avg_percent": 61.49782608695652,
+        "process_cpu_max_percent": 71.9,
+        "rss_max_mb": 116.1,
+        "memory_max_percent": 66.0
+      }
+    },
+    "cpu_avg_percent": 64.59673913043478,
+    "cpu_max_percent": 76.2,
+    "rss_max_mb": 116.2,
+    "process_cpu_avg_percent": 61.30326086956522,
+    "process_cpu_max_percent": 71.9
+  },
+  "scenario": "A-scaling"
+}

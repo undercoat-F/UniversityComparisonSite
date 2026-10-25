@@ -1,0 +1,28 @@
+# 試験B：Crawl-delay遵守試験（機能確認用） benchmark_concept_revisions.md R1.4
+# 内容確認: python -m benchmark.mock.inspect_scenario benchmark/mock/scenarios/B_crawl_delay.yaml
+scenario: B-crawl-delay
+seed: 42
+scheme: https
+domain_suffix: bench.internal
+
+# 個別列挙。name に "." を含まない場合は domain_suffix が付く（domain-a.bench.internal）
+# profile の項目（crawl_delay, pages 等）はドメインごとに上書きできる
+domains:
+  - {name: domain-a, profile: normal, crawl_delay: 1}
+  - {name: domain-b, profile: normal, crawl_delay: 2}
+  - {name: domain-c, profile: normal, crawl_delay: 3}
+
+profiles:
+  normal:
+    pages: 30
+    links_per_page: 5
+    sitemap_ratio: 0.8
+    responses: {fast: 1.0}
+
+response_types:
+  ok:   {status: 200, delay_ms: 0}
+  fast: {status: 200, delay_ms: 10}
+
+checks:
+  crawler_max_depth: 5
+  client_timeout_sec: 30
