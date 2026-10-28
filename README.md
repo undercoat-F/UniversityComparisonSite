@@ -56,7 +56,7 @@ flowchart LR
             W1["Worker<br/>asyncio / 窓口32"]
             W2["Worker<br/>asyncio / 窓口32"]
         end
-        Valkey[("ElastiCache Valkey<br/>URL 重複排除<br/>ドメイン単位の Crawl-delay 予約")]
+        Valkey[("ElastiCache Valkey<br/>URL 重複排除<br/>Crawl-delay 予約(ドメイン単位)")]
         API["FastAPI + Caddy"]
     end
 
