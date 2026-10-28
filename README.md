@@ -47,7 +47,7 @@ flowchart LR
         Web["University Websites"]
     end
 
-    subgraph AWS["AWS (ap-northeast-1)"]
+    subgraph AWS["AWS"]
         Observer["Observer<br/>候補 URL の観測・品質判定"]
         CP["Control Plane (EC2)<br/>producer<br/>robots.txt / sitemap 取得"]
         SQS[["SQS FIFO<br/>crawl-tasks.fifo<br/>MessageGroupId = ドメイン"]]
@@ -82,18 +82,18 @@ flowchart LR
 | --- | --- |
 | Observer | 情報源を観測し、品質ゲートを通った URL を `seed_urls` に登録する |
 | Control Plane（producer） | `seed_urls` を読み、各ドメインの robots.txt・sitemap を取得して SQS にタスクを投入する。1回実行して終わる |
-| SQS FIFO | タスクを Worker に配る。`MessageGroupId` をドメインにして、同じドメインのタスクが同時に複数の Worker へ渡らないようにする。5回失敗したタスクは DLQ へ移す |
+| SQS (FIFO) | タスクを Worker に配る。`MessageGroupId` をドメインにして、同じドメインのタスクが同時に複数の Worker へ渡らないようにする。5回失敗したタスクは DLQ へ移す |
 | Worker | SQS からタスクを受け取ってページを取得・抽出し、見つけたリンクを SQS に戻す。抽出結果は一定件数・一定時間ごとに DB へまとめて書き込む |
 | Valkey | 処理済み URL の重複排除と、ドメインごとの「次にアクセスしてよい時刻」の予約（Worker をまたいで Crawl-delay を守る） |
 | FastAPI + Caddy | 読み取り専用ロールで DB に接続する検索 API。Caddy が HTTPS で公開する |
 
 ### Legacy（1台で処理する旧方式）
 
-Scheduler → Crawler → `asyncio.Queue` → JSONL Writer → Transform / Load を1つのプロセスで実行します。抽出結果を `log/extracted_records_*.jsonl` に書き出し、ETL が DB に投入します。性能計測では比較の基準として使いました（[`ControlPlane/ETL.py`](ControlPlane/ETL.py)）。
+Scheduler → Crawler → `asyncio.Queue` → JSONL Writer → Transform / Load を1つのプロセスで実行する。抽出結果を `log/extracted_records_*.jsonl` に書き出し、ETL が DB に投入する。性能計測では比較の基準として使用（[`ControlPlane/ETL.py`](ControlPlane/ETL.py)）。
 
 ## 3. 性能計測の結果
 
-本物の大学サイトに負荷をかけずに計測するため、**1,000 個の架空ドメイン（`dNNNN.bench.internal`）を1台で再現する Mock Server** を作り、Route 53 のプライベートゾーンと独自の CA で HTTPS ごと置き換えて計測しました。数値はすべて Mock 側のアクセスログから計算しています。
+本物の大学サイトに負荷をかけずに計測するため、**1,000 個の架空ドメイン（`dNNNN.bench.internal`）を1台で再現する Mock Server** を作り、Route 53 のプライベートゾーンと独自の CA で HTTPS ごと置き換えて計測した。数値はすべて Mock 側のアクセスログから計算している。
 
 ### 試験A：台数を増やしたときのスループット（31,000 ページ）
 
@@ -107,13 +107,14 @@ Worker は t3.micro、1台あたり2プロセス、1プロセスあたり同時�
 | 分散版 x3 | 6 | 462.1 秒 | 67.08 | 82.49 | 約 101 | 3.16x | **0** |
 | 分散版 x4 | 8 | 401.7 秒 | 77.17 | 97.08 | 約 130 | **3.64x** | **0** |
 
-- 分散版はすべての計測で 31,000/31,000 ページを取得し、Crawl-delay の違反は 0 件でした
-- 安定時のスループットは台数にほぼ比例しました（x1 比 2.05 / 2.93 / 3.77 倍、x4 でも効率 94%）。SQS・DB・Mock は x4 でもボトルネックになっていません
-- 所要時間全体で見た伸びが鈍いのは、台数を増やしても縮まない固定の時間（producer の準備に約 80 秒、最後のドメインの Crawl-delay 待ちに約 60 秒）があるためです
+- 分散版はすべての計測で 31,000/31,000 ページを取得し、Crawl-delay の違反は 0 件
+- 安定時のスループットは台数にほぼ比例した（x1 比 2.05 / 2.93 / 3.77 倍、x4 でも効率 94%）。SQS・DB・Mock は x4 でもボトルネックになっていない
+- 所要時間全体で見た伸びが鈍いのは、台数を増やしても縮まない固定の時間（producer の準備に約 80 秒、最後のドメインの Crawl-delay 待ちに約 60 秒）があるため
+- 分散版 x1 の時点でLegacyより早く、Crawl-delay違反がないのは、スレッドの非同期化が不十分であった点とCrawl-delayを遵守する処理の誤りを修正したため
 
 ### 試験C：1プロセスの限界
 
-Worker 1台・1プロセスで窓口数を 16 → 32 → 64 と増やすと、スループットは 14.4 → 20.0 → 19.1 URLs/sec となり、**窓口32の約 20 URLs/sec で頭打ち**になりました。EC2 全体の CPU は約 30% で、限界は EC2 ではなく Python の1プロセス（1つのイベントループ）にあることが分かりました。この結果から、試験A では1台を2プロセスにしています。
+Worker 1台・1プロセスで窓口数を 16 → 32 → 64 と増やすと、スループットは 14.4 → 20.0 → 19.1 URLs/sec となり、**窓口32の約 20 URLs/sec で頭打ち**になった。EC2 全体の CPU は約 30% で、限界は EC2 ではなく Python の1プロセス（1つのイベントループ）にあることが分かった。この結果から、試験A では1台を2プロセスにして実施している。
 
 ### 計測の詳細
 
@@ -136,7 +137,7 @@ Worker 1台・1プロセスで窓口数を 16 → 32 → 64 と増やすと、�
 
 - `universities`、`degree_programs`、`tuition_patterns`、関連付けテーブルへの変換
 - 元の金額と通貨を保持したまま、比較用の月額値も保存
-- 観測ログに対する品質ゲート（seed の発見率、致命的エラー率、API 使用回数の平均、PDF 取得時の致命的エラー）
+- 観測ログに対する品質ゲート（seed の発見率、致命的エラー率、API 使用回数の平均）
 
 ### 検索 API・画面
 
@@ -165,27 +166,27 @@ Worker 1台・1プロセスで窓口数を 16 → 32 → 64 と増やすと、�
 
 ### ドメイン単位で順序を保ちつつ、ドメイン間は並列にする
 
-SQS FIFO の `MessageGroupId` をドメインにしています。同じドメインのタスクは1つずつ処理されるため Crawl-delay を守りやすく、異なるドメインは複数の Worker で並列に処理されます。Worker は1プロセスの中でも、複数のドメインを `asyncio` で並行して処理します。
+SQS FIFO の `MessageGroupId` をドメインにしています。同じドメインのタスクは1つずつ処理されるため Crawl-delay を守りやすく、異なるドメインは複数の Worker で並列に処理される。Worker は1プロセスの中でも、複数のドメインを `asyncio` で並行して処理する。
 
 ### Crawl-delay を Worker をまたいで守る
 
-ドメインごとの「次にアクセスしてよい時刻」を Valkey に持たせ、取得の直前に Lua スクリプトで枠を予約します。予約は1回の操作で行うため、複数の Worker が同時に予約しても重なりません。時刻には Valkey サーバーの時計を使うので、EC2 間の時計のずれの影響も受けません。また、間隔は「前回のアクセスの完了」から数えるようにしたため、応答が遅いときに間隔が詰まることがありません。計測では、分散版の違反は全計測で 0 件でした。
+ドメインごとの「次にアクセスしてよい時刻」を Valkey に持たせ、取得の直前に Lua スクリプトで枠を予約。予約は1回の操作で行うため、複数の Worker が同時に予約しても重ならない。時刻には Valkey サーバーの時計を使うので、EC2 間の時計のずれの影響も受けない。また、間隔は「前回のアクセスの完了」から数えるようにしたため、応答が遅いときに間隔が詰まることもない。計測では、分散版の違反は全計測で 0 件だった（ただしこれはテスト環境での実施で、実際のWeb上での結果ではない）。
 
 ### 計測はサーバー側で行う
 
-クローラー自身の記録ではなく、Mock Server が受けたアクセスログを正としてスループット・取りこぼし・Crawl-delay 違反を計算しています。Legacy と分散版を同じ基準で比較でき、クローラー側のバグがあっても計測結果は影響を受けません。
+クローラー自身の記録ではなく、Mock Server が受けたアクセスログを正としてスループット・取りこぼし・Crawl-delay 違反を計算している。Legacy と分散版を同じ基準で比較でき、クローラー側のバグがあっても計測結果は影響を受けない想定。
 
 ### 収集と提供を分離する
 
-クローラーと検索 API を別の処理にし、検索 API は読み取り専用ロールで DB に接続しています。収集処理が遅くても検索 API の応答に影響しにくく、API からの意図しない更新も防げます。
+クローラーと検索 API を別の処理にし、検索 API は読み取り専用ロールで DB に接続している。収集処理が遅くても検索 API の応答に影響しにくく、API からの意図しない更新も防げます。
 
 ### 失敗をデータとして残す
 
-HTTP エラー、タイムアウト、bot 対策、sitemap の取得失敗などを捨てずにログ・観測テーブルに残し、次回の対象選定や品質ゲートの判定に使います。
+HTTP エラー、タイムアウト、bot 対策、sitemap の取得失敗などを捨てずにログ・観測テーブルに残している。（次回の対象選定や品質ゲートの判定に使うため）
 
 ### 設定値とコードを分離する
 
-DB の接続情報は `.env`、AWS の環境固有の値は `terraform.tfvars` に置き、Git の管理から外しています。公開用の [`terraform.tfvars.example`](terraform/terraform.tfvars.example) にはプレースホルダーだけを記載しています。
+DB の接続情報は `.env`、AWS の環境固有の値は `terraform.tfvars` に置き、Git の管理から外している。公開用の [`terraform.tfvars.example`](terraform/terraform.tfvars.example) にはプレースホルダーだけを記載。
 
 ## 7. 実行方法
 
@@ -194,11 +195,11 @@ DB の接続情報は `.env`、AWS の環境固有の値は `terraform.tfvars` �
 - Python 3.11 以上
 - Docker / Docker Compose
 - PostgreSQL の接続先
-- 分散版の場合: SQS キューと Valkey（[Terraform](#8-terraform--aws) で作成）
+- SQS キューと Valkey（[Terraform](#8-terraform--aws) で作成）
 
 ### 環境変数
 
-`.env` を作成し、実行する処理に必要な接続情報を設定します。実際のパスワードや DSN はコミットしないでください。
+`.env` を作成し、実行する処理に必要な接続情報を設定している。実際のパスワードや DSN はコミットしない想定。
 
 ### 分散クロール（Docker Compose）
 
@@ -210,7 +211,7 @@ docker compose --profile distributed run --rm controlplane
 docker compose --profile distributed up -d --build --scale worker=2 worker
 ```
 
-Worker の同時実行数は `WORKER_MAX_CONCURRENCY`（計測では 32）で設定します。
+Worker の同時実行数は環境変数の `WORKER_MAX_CONCURRENCY`（計測では 32）で設定している。
 
 ### Legacy・API・Observer（Python）
 
@@ -260,9 +261,9 @@ terraform apply
 ## 9. 現在の課題・今後
 
 - **固定時間の短縮**: producer の準備（robots.txt・sitemap の取得と投入）が約 80 秒かかり、台数を増やしても縮まない。Worker 側での取得や並列化を検討する
-- **1プロセスあたりの性能**: SQS の削除・送信（boto3 の同期呼び出し）と HTML の解析がイベントループを止めている。別スレッド・別プロセスへの移動を検討する
+- **1プロセスあたりの性能**: SQS の削除・送信（boto3 の同期呼び出し）と HTML の解析がイベントループを止めている。別スレッド・別プロセスへの移動を行えば更なるスループットの向上が見込まれる
 - **書き込み前の異常終了**: SQS のメッセージは処理直後に削除するため、DB へまとめて書き込む前に Worker が落ちるとその分のレコードは失われる
-- **Worker の構築の自動化**: 現在は EC2 の起動後にアプリの配置を手作業で行っている。user_data と Secrets Manager で自動化する
+- **Worker の構築の自動化**: 現在は EC2 の起動後にアプリの配置を手作業で行っているが、自動化する余地があるように思う
 - **Observer の情報源の追加**: 実際の大学サイトを対象に、国・地域ごとの情報源を増やす
 - **検索 API の公開**: 認証、レート制限、CORS の許可先を本番向けに見直す
 - **CI/CD の更新**: Railway へのデプロイ時のままなので、分散版に合わせて更新する
