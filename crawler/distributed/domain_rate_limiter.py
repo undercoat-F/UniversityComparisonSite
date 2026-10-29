@@ -6,7 +6,7 @@ Valkey にドメインごとの「次にアクセスしてよい時刻」を持�
     保存値  = start + Crawl-delay              ← 次の人がアクセスしてよい時刻
     戻り値  = start - 今                       ← 待つ時間
 
-- 予約は Lua スクリプトで1回の操作として実行するため、複数の Worker が同時に予約しても枠は重ならない
+- 予約は Lua スクリプト（lua/reserve.lua）で1回の操作として実行するため、複数の Worker が同時に予約しても枠は重ならない
 - 時刻は Valkey サーバーの時計（TIME）を使うため、Worker 間の時計のずれの影響を受けない
 - 間隔はリクエストの開始時刻どうしで空ける（Legacy の SiteState.mark_access と同じ）
 - 取得が完了したら mark_accessed で次回時刻を「完了＋Crawl-delay」まで後ろ倒しする。送信前の処理
@@ -21,6 +21,7 @@ import asyncio
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -32,27 +33,10 @@ KEY_PREFIX = "crawl:next:"
 # 最後の予約から、この時間アクセスがなければキーを消す（次回時刻を過ぎたキーは不要なため）
 KEY_IDLE_TTL_MS = 10 * 60 * 1000
 
-# KEYS[1] = ドメインのキー, ARGV[1] = Crawl-delay (ms), ARGV[2] = 待ちのないキーを残す時間 (ms)
-RESERVE_SCRIPT = """
-local t = redis.call('TIME')
-local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
-local stored = tonumber(redis.call('GET', KEYS[1]) or '0')
-local start = math.max(now, stored)
-local next_at = start + tonumber(ARGV[1])
-redis.call('SET', KEYS[1], next_at, 'PX', (next_at - now) + tonumber(ARGV[2]))
-return start - now
-"""
-
-# 取得の完了後に呼ぶ。次回時刻を「今 + Crawl-delay」より前にしない
-# KEYS[1] = ドメインのキー, ARGV[1] = Crawl-delay (ms), ARGV[2] = 待ちのないキーを残す時間 (ms)
-MARK_STARTED_SCRIPT = """
-local t = redis.call('TIME')
-local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
-local stored = tonumber(redis.call('GET', KEYS[1]) or '0')
-local next_at = math.max(stored, now + tonumber(ARGV[1]))
-redis.call('SET', KEYS[1], next_at, 'PX', (next_at - now) + tonumber(ARGV[2]))
-return next_at - now
-"""
+# Lua スクリプトは lua/ に置く（中身と KEYS・ARGV の説明は各ファイルの先頭）
+_LUA_DIR = Path(__file__).with_name("lua")
+RESERVE_SCRIPT = (_LUA_DIR / "reserve.lua").read_text(encoding="utf-8")
+MARK_ACCESSED_SCRIPT = (_LUA_DIR / "mark_accessed.lua").read_text(encoding="utf-8")
 
 
 class LocalDomainRateLimiter:
@@ -93,7 +77,7 @@ class ValkeyDomainRateLimiter:
     def __init__(self, client, *, fallback: Optional[LocalDomainRateLimiter] = None) -> None:
         self._client = client
         self._script = client.register_script(RESERVE_SCRIPT)
-        self._mark_script = client.register_script(MARK_STARTED_SCRIPT)
+        self._mark_script = client.register_script(MARK_ACCESSED_SCRIPT)
         self._fallback = fallback or LocalDomainRateLimiter()
         self._fallback_warned = False
 
