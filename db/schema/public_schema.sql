@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS ${DEGREE_PROGRAMS_TABLE} (
   source_url TEXT,
   last_seen TIMESTAMP,
   quality_flag VARCHAR(50) DEFAULT 'low',
+  excluded_reason VARCHAR(50),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

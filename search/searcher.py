@@ -66,6 +66,10 @@ DEGREE_PROGRAMS_TABLE = get_table_ref("DEGREE_PROGRAMS_TABLE")
 TUITION_PATTERNS_TABLE = get_table_ref("TUITION_PATTERNS_TABLE")
 PROGRAM_TUITION_MAP_TABLE = get_table_ref("PROGRAM_TUITION_MAP_TABLE")
 
+# 学位プログラムではないと判定した行（excluded_reason に理由あり）は返さない。
+# needs_review は確認待ちの印で、本物のプログラムも含むため表示する（db/cleanup/20261101_classify_programs.sql）
+VISIBLE_PROGRAM_CONDITION = "(dp.excluded_reason IS NULL OR dp.excluded_reason = 'needs_review')"
+
 app = FastAPI(title="学位検索API", version="1.0.0")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -167,7 +171,7 @@ def search_programs(
         JOIN {UNIVERSITIES_TABLE} u ON dp.university_id = u.id
         LEFT JOIN {PROGRAM_TUITION_MAP_TABLE} ptm ON ptm.degree_program_id = dp.id
         LEFT JOIN {TUITION_PATTERNS_TABLE} tp ON ptm.tuition_pattern_id = tp.id
-        WHERE 1=1
+        WHERE {VISIBLE_PROGRAM_CONDITION}
     """
 
     params = []
@@ -287,7 +291,7 @@ def get_program(program_id: int):
                     u.country
                 FROM {DEGREE_PROGRAMS_TABLE} dp
                 JOIN {UNIVERSITIES_TABLE} u ON dp.university_id = u.id
-                WHERE dp.id = %s
+                WHERE dp.id = %s AND {VISIBLE_PROGRAM_CONDITION}
             """, (program_id,))
             row = cur.fetchone()
             if row is None:
@@ -343,7 +347,13 @@ def get_countries():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT DISTINCT country FROM {UNIVERSITIES_TABLE} WHERE country IS NOT NULL ORDER BY country"
+                f"""
+                SELECT DISTINCT u.country
+                FROM {UNIVERSITIES_TABLE} u
+                JOIN {DEGREE_PROGRAMS_TABLE} dp ON dp.university_id = u.id
+                WHERE u.country IS NOT NULL AND {VISIBLE_PROGRAM_CONDITION}
+                ORDER BY u.country
+                """
             )
             return [row[0] for row in cur.fetchall()]
     except Exception as e:

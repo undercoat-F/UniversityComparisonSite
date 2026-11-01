@@ -137,9 +137,14 @@ def create_schema(conn):
                 source_url TEXT,
                 last_seen TIMESTAMP,
                 quality_flag VARCHAR(50) DEFAULT 'high',
+                excluded_reason VARCHAR(50),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """
+        )
+        # 学位プログラムではない行の印（検索 API が参照する）。既存のテーブルにも追加する
+        cursor.execute(
+            f"ALTER TABLE {DEGREE_PROGRAMS_TABLE} ADD COLUMN IF NOT EXISTS excluded_reason VARCHAR(50)"
         )
 
         cursor.execute(
