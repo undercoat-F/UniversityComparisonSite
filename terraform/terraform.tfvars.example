@@ -12,3 +12,5 @@ benchmark_instance_type        = "t3.medium"
 benchmark_root_volume_size_gb  = 30
 benchmark_data_volume_size_gb  = 100
 benchmark_domain_suffix        = "bench.internal"
+web_enabled                    = true
+web_instance_type              = "t3.micro"

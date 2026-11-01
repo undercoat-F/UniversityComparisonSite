@@ -63,9 +63,9 @@ resource "aws_instance" "worker" {
 
   subnet_id = var.subnet_id
   tags = {
-    "Name"      = "UniversityComparison-worker-${count.index + 1}"
-    "Role"      = "worker"
-    "WorkerId"  = "worker-${count.index + 1}"
+    "Name"     = "UniversityComparison-worker-${count.index + 1}"
+    "Role"     = "worker"
+    "WorkerId" = "worker-${count.index + 1}"
   }
 
   # controlplane と同じ理由で、作成後の user_data の変更は無視する
@@ -91,6 +91,8 @@ output "worker_private_ips" {
   value = aws_instance.worker[*].private_ip
 }
 
+# クローラー（Control Plane・Worker）は外向きの通信だけで動くため、受信は SSH のみ許可する。
+# 80/443 は公開用の EC2（web.tf）だけに開ける
 resource "aws_security_group" "crawler" {
   name        = var.security_group_name
   description = var.security_group_description
@@ -109,45 +111,6 @@ resource "aws_security_group" "crawler" {
       security_groups  = []
       self             = false
       to_port          = 22
-    },
-    {
-      cidr_blocks = [
-        var.web_allowed_cidr,
-      ]
-      description      = "HTTP for Caddy ACME challenges and HTTPS redirects"
-      from_port        = 80
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 80
-    },
-    {
-      cidr_blocks = [
-        var.web_allowed_cidr,
-      ]
-      description      = "HTTPS served by Caddy"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    },
-    {
-      cidr_blocks = [
-        var.web_allowed_cidr,
-      ]
-      description      = "HTTP/3 served by Caddy"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "udp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
     },
   ]
 

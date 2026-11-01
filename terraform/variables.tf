@@ -51,7 +51,7 @@ variable "ssh_allowed_cidr" {
 
 variable "web_allowed_cidr" {
   type        = string
-  description = "CIDR allowed to reach the Caddy HTTP and HTTPS listeners"
+  description = "CIDR allowed to reach the Caddy HTTP and HTTPS listeners on the web EC2"
   default     = "0.0.0.0/0"
 }
 
@@ -98,4 +98,16 @@ variable "benchmark_legacy_enabled" {
   type        = bool
   description = "Whether to create the Legacy (pre-distributed) crawler EC2 used as the benchmark baseline"
   default     = false
+}
+
+variable "web_enabled" {
+  type        = bool
+  description = "Whether to create the public web EC2 (Caddy + search API) with an Elastic IP"
+  default     = false
+}
+
+variable "web_instance_type" {
+  type        = string
+  description = "EC2 instance type for the public web server"
+  default     = "t3.micro"
 }
