@@ -914,7 +914,11 @@ def _build_domain_discovery_queries_with_stats(request: SearchRequest) -> tuple[
         if not n:
             dropped_empty_names += 1
             continue
-        per_name = [f"{n} 公式", f"{n} official", f"{n} official site"]
+        # SEARCH_DISCOVERY_PER_UNIVERSITY_LIMIT で先頭から使うため、大学名の言語に合う語を先にする
+        if re.search(r"[぀-ヿ一-鿿]", n):
+            per_name = [f"{n} 公式", f"{n} official", f"{n} official site"]
+        else:
+            per_name = [f"{n} official", f"{n} official site", f"{n} 公式"]
         deduped_per_name: list[str] = []
         seen_per_name: set[str] = set()
         for query in per_name:

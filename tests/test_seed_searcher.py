@@ -86,10 +86,17 @@ class TestSeedSearcher(unittest.TestCase):
             queries = seed_searcher._build_domain_discovery_queries(req)
 
         self.assertEqual(len(queries), 4)
-        self.assertIn("A University 公式", queries)
-        self.assertIn("B University 公式", queries)
-        self.assertIn("C University 公式", queries)
+        # 英語名は official を先に使う（1巡目で各大学の1件目、2巡目で A の2件目）
         self.assertIn("A University official", queries)
+        self.assertIn("B University official", queries)
+        self.assertIn("C University official", queries)
+        self.assertIn("A University official site", queries)
+
+    def test_japanese_names_use_koushiki_first(self):
+        req = types.SimpleNamespace(university_names=["東京大学", "University of Otago"], source_domain="")
+        with patch.dict("os.environ", {"SEARCH_DISCOVERY_PER_UNIVERSITY_LIMIT": "1"}, clear=False):
+            queries = seed_searcher._build_domain_discovery_queries(req)
+        self.assertEqual(queries, ["東京大学 公式", "University of Otago official"])
 
     def test_query_generation_summary_is_logged(self):
         item = _build_item("Summary University")

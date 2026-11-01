@@ -8,21 +8,24 @@ from dataclass.dataclass import PageAnalysis
 from observer import seed_observer
 
 
+# 大学名を抜き出す一覧ページ。政府・政府機関の名簿を基本とし、件数を増やしたい国は Wikipedia の一覧を足す。
+# 条件: 大学名が HTML（表・リンク・リスト）か PDF にそのまま書かれていること（JavaScript で表示するページは読めない）。
+# bot 対策で 403 を返すサイト（Complete University Guide、Universities Canada など）は使わない。
 OBSERVE_SOURCE_URLS: list[str] = [
-    # "https://www.universitiesuk.ac.uk/",
-    #"https://note.com/chisyukangakusei/n/na0f368d97aef",
+    # 日本: 文部科学省 数理・データサイエンス・AI 教育プログラム認定校
     "https://www.mext.go.jp/a_menu/koutou/suuri_datascience_ai/mext_00005.html",
-    
+    # カナダ: CICIC（カナダ政府が支援する認定機関の名簿）
     "https://www.cicic.ca/869/resultats.canada?search=",
-    #"https://www.cicic.ca/869/results.canada?search="
-
-    #"https://www.teqsa.gov.au/search",
-    #"https://www.teqsa.gov.au/search?page=8",　なぜか未返答
-    
-    "https://www.gov.ie/en/schools/",
-    "https://www.gov.ie/en/schools/?page=6",#アイルランド
-
-    
+    "https://en.wikipedia.org/wiki/List_of_universities_in_Canada",
+    # イギリス: GOV.UK 学位を出せる機関（recognised bodies）
+    "https://www.gov.uk/check-university-award-degree/recognised-bodies",
+    "https://en.wikipedia.org/wiki/List_of_universities_in_the_United_Kingdom",
+    # オーストラリア: Study Australia（豪政府）
+    "https://www.studyaustralia.gov.au/en/plan-your-studies/list-of-australian-universities",
+    # ニュージーランド: Study with New Zealand（NZ 政府機関）
+    "https://www.studywithnewzealand.govt.nz/en/study-options/universities",
+    # アイルランド: HEA（高等教育庁）。gov.ie/en/schools は小中学校の一覧のため外した
+    "https://hea.ie/higher-education-institutions/",
 ]
 
 
